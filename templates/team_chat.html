@@ -1,0 +1,348 @@
+{% extends "base.html" %}
+{% set active = 'teams' %}
+{% block title %}{{ team.name }} · 团队对话{% endblock %}
+{% block page_title %}💬 {{ team.name }}{% endblock %}
+{% block breadcrumb %}
+  <a href="/teams" class="tag" style="text-decoration:none">← 返回团队列表</a>
+  <span class="badge badge-blue">{{ {'sequential':'➡️ 顺序执行','parallel':'🔀 并行讨论','debate':'⚖️ 辩论表决'}.get(team.workflow_type, team.workflow_type) }}</span>
+  <span class="text-3" style="font-size:12px">{{ team.members|length }} 人 · {{ team.max_rounds }} 轮</span>
+{% endblock %}
+{% block content_class %}chat-page{% endblock %}
+
+{% block head %}
+<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+<style>
+  .page-content.chat-page{max-width:none;padding:0;height:calc(100vh - var(--topbar-h));display:flex;flex-direction:column}
+  .chat-layout{display:flex;flex:1;min-height:0}
+  .member-sidebar{width:220px;background:var(--surface);border-right:1px solid var(--border);display:flex;flex-direction:column;padding:16px;flex-shrink:0;overflow-y:auto}
+  .member-sidebar h3{font-size:13px;color:var(--text-2);margin-bottom:12px;display:flex;align-items:center;justify-content:space-between}
+  .member-card{padding:10px;border-radius:8px;background:var(--bg);margin-bottom:8px;border:1px solid transparent;position:relative}
+  .member-card .m-icon{font-size:24px}
+  .member-card .m-name{font-size:13px;font-weight:600;color:var(--text);margin-top:4px}
+  .member-card .m-role{font-size:11px;color:var(--text-3)}
+  .member-card.active{border-color:var(--primary);background:var(--primary-soft)}
+  .member-card .remove-member-btn{position:absolute;top:4px;right:4px;width:20px;height:20px;border-radius:50%;border:none;background:var(--danger);color:#fff;cursor:pointer;font-size:11px;display:none}
+  .member-sidebar.editing .remove-member-btn{display:flex;align-items:center;justify-content:center}
+  .member-sidebar.editing .member-card{border-color:var(--danger);border-style:dashed}
+  .member-sidebar .edit-toggle{font-size:12px;padding:3px 10px;border-radius:6px;border:1px solid var(--border);background:var(--surface);cursor:pointer;color:var(--text-2)}
+  .member-sidebar .edit-actions{display:none;margin-top:8px;gap:6px;flex-wrap:wrap}
+  .member-sidebar.editing .edit-actions{display:flex}
+  .edit-actions select{flex:1;min-width:0;padding:6px 8px;border:1px solid var(--border);border-radius:6px;font-size:12px}
+  .edit-actions .btn-sm{padding:5px 10px;font-size:11px;border-radius:6px;border:none;cursor:pointer}
+  .edit-actions .btn-add{background:var(--primary);color:#fff}
+  .edit-actions .btn-save{background:var(--success);color:#fff}
+  .edit-actions .btn-cancel{background:var(--bg);color:var(--text-2)}
+  .main-chat{flex:1;display:flex;flex-direction:column;background:var(--surface);min-width:0}
+  .chat-header{padding:14px 24px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;flex-shrink:0}
+  .chat-header .hint{font-size:13px;color:var(--text-3)}
+  .chat-messages{flex:1;overflow-y:auto;padding:20px 24px}
+  .chat-message{margin-bottom:20px;max-width:85%}
+  .chat-message.user{text-align:right;margin-left:auto}
+  .chat-message.user .msg-bubble{display:inline-block;padding:12px 18px;border-radius:18px 18px 4px 18px;background:var(--primary);color:#fff;font-size:14px;line-height:1.6;text-align:left;max-width:100%}
+  .chat-message.assistant{text-align:left}
+  .chat-message.assistant .msg-bubble{display:inline-block;padding:14px 18px;border-radius:18px 18px 18px 4px;background:var(--bg);color:var(--text);font-size:14px;line-height:1.7;max-width:100%}
+  .dp-message{margin-bottom:8px;padding:8px 12px;border-radius:8px;font-size:12px;line-height:1.5;animation:dpIn .3s ease}
+  @keyframes dpIn{from{opacity:0;transform:translateY(5px)}to{opacity:1;transform:none}}
+  .dp-message.agent-start{background:#eef0ff;border-left:3px solid var(--primary)}
+  .dp-message.agent-output{background:var(--surface);border:1px solid var(--border)}
+  .dp-message.agent-output .agent-label{font-weight:600;color:var(--primary);margin-bottom:4px}
+  .dp-message.agent-output .agent-content{color:var(--text-2);overflow-y:auto;max-height:150px;font-size:12px}
+  .dp-message.debate-round{background:#fff8e1;border-left:3px solid var(--warning)}
+  .dp-message.summarizing{background:#e8f5e9;border-left:3px solid var(--success);font-style:italic}
+  .dp-message.done{background:#e8f5e9;border-left:3px solid var(--success);font-weight:600}
+  .discussion-panel{margin-top:10px;border:1px solid var(--border);border-radius:10px;overflow:hidden;max-height:800px;display:flex;flex-direction:column}
+  .discussion-panel .dp-header{padding:8px 12px;background:var(--primary-soft);font-size:12px;font-weight:600;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:6px}
+  .discussion-panel .dp-body{flex:1;overflow-y:auto;padding:8px 12px;background:var(--bg)}
+  .input-area{padding:16px 24px;border-top:1px solid var(--border);flex-shrink:0}
+  .typing{display:inline-flex;align-items:center;gap:4px;padding:12px 18px;background:var(--bg);border-radius:18px}
+  .typing .dot{width:6px;height:6px;background:var(--primary);border-radius:50%;animation:pulse 1.4s infinite}
+  .typing .dot:nth-child(2){animation-delay:.2s}
+  .typing .dot:nth-child(3){animation-delay:.4s}
+  @keyframes pulse{0%,80%,100%{opacity:.3}40%{opacity:1}}
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="chat-layout">
+  <div class="member-sidebar" id="memberSidebar">
+    <h3><span>👥 团队成员</span><button class="edit-toggle" onclick="toggleEdit()" id="editToggleBtn">✏️ 编辑</button></h3>
+    <div id="memberList">
+      {% for m in team.members %}
+      <div class="member-card" data-agent-id="{{ m.agent_id }}">
+        <button class="remove-member-btn" onclick="removeMember(this)" title="移除">×</button>
+        <div class="m-icon">{{ m.icon or '🤖' }}</div>
+        <div class="m-name">{{ m.display_name or m.agent_name }}</div>
+        <div class="m-role">{{ m.role_in_team or '成员' }}</div>
+      </div>
+      {% endfor %}
+    </div>
+    <div class="edit-actions" id="editActions">
+      <select id="agentSelect"></select>
+      <button class="btn-sm btn-add" onclick="addMember()">＋ 添加</button>
+      <button class="btn-sm btn-save" onclick="saveMembers()">💾 保存</button>
+      <button class="btn-sm btn-cancel" onclick="cancelEdit()">取消</button>
+    </div>
+  </div>
+
+  <div class="main-chat">
+    <div class="chat-header">
+      <span>💬 输入问题，团队将协作回答</span>
+      <span style="display:flex;gap:8px;align-items:center">
+        <span class="hint">历史已保存到数据库</span>
+        <button class="btn btn-ghost btn-sm" onclick="clearHistory()">🗑️ 清空</button>
+      </span>
+    </div>
+
+    <div class="chat-messages" id="chatMessages">
+      <div class="chat-message assistant">
+        <div class="msg-bubble">
+          👋 你好！我是 <strong>{{ team.name }}</strong> 团队助手。<br>
+          团队成员：{% for m in team.members %}{{ m.icon or '🤖' }}{{ m.display_name or m.agent_name }}{% if not loop.last %} · {% endif %}{% endfor %}<br>
+          协作模式：{{ {'sequential':'➡️ 顺序执行','parallel':'🔀 并行讨论','debate':'⚖️ 辩论表决'}.get(team.workflow_type,'') }}<br><br>
+          请输入你的问题，团队将逐步分析并给出最终答案。
+        </div>
+      </div>
+    </div>
+
+    <div class="input-area">
+      <div class="chat-input-row">
+        <textarea class="chat-input" id="questionInput" rows="2" placeholder="输入问题，按 Enter 发送（Shift+Enter 换行）"></textarea>
+        <button class="btn btn-primary btn-lg" id="sendBtn" type="button">➤ 发送</button>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const teamId = {{ team.id }};
+let isRunning = false;
+let sessionId;
+try {
+  sessionId = localStorage.getItem('team_session_' + teamId) || 'team_' + teamId + '_' + Date.now();
+  localStorage.setItem('team_session_' + teamId, sessionId);
+} catch (e) { sessionId = 'team_' + teamId + '_' + Date.now(); }
+
+let agents = [];
+let originalMembers = [];
+
+document.addEventListener('DOMContentLoaded', function () {
+  const sendBtn = document.getElementById('sendBtn');
+  const sendInput = document.getElementById('questionInput');
+  sendBtn.addEventListener('click', send);
+  sendInput.addEventListener('keydown', function (e) {
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); }
+  });
+  fetch('/api/agents/list').then(r => r.json()).then(data => {
+    agents = data;
+    const cards = document.querySelectorAll('#memberList .member-card');
+    originalMembers = Array.from(cards).map(c => ({
+      agent_id: parseInt(c.dataset.agentId, 10),
+      role_in_team: c.querySelector('.m-role').textContent === '成员' ? '' : c.querySelector('.m-role').textContent
+    }));
+    populateAgentSelect();
+  });
+  fetch('/api/teams/' + teamId + '/history?session_id=' + encodeURIComponent(sessionId))
+    .then(r => r.json()).then(items => {
+      const container = document.getElementById('chatMessages');
+      const promises = [];
+      for (const item of items) {
+        const userDiv = document.createElement('div');
+        userDiv.className = 'chat-message user';
+        userDiv.innerHTML = '<div class="msg-bubble">' + item.question.replace(/</g, '&lt;').replace(/>/g, '&gt;') + '</div>';
+        container.appendChild(userDiv);
+        const asstDiv = document.createElement('div');
+        asstDiv.className = 'chat-message assistant';
+        const bubble = document.createElement('div');
+        bubble.className = 'msg-bubble';
+        bubble.innerHTML = '<strong>📋 最终答案</strong><br><br>' + marked.parse(item.answer);
+        asstDiv.appendChild(bubble);
+        container.appendChild(asstDiv);
+        if (item.workflow_id) {
+          const p = fetch('/api/teams/steps/' + item.workflow_id).then(r => r.json()).then(steps => {
+            if (!steps.length) return;
+            const dpDiv = document.createElement('div');
+            dpDiv.className = 'discussion-panel';
+            let bodyHtml = '';
+            for (const step of steps) {
+              const roundLabel = step.decision ? ' (' + step.decision + ')' : '';
+              bodyHtml += '<div class="dp-message agent-output"><div class="agent-label">📊 ' + escapeHtml(step.agent_name) + roundLabel + '</div><div class="agent-content">' + marked.parse(step.output_text) + '</div></div>';
+            }
+            bodyHtml += '<div class="dp-message done">✅ 讨论完成</div>';
+            dpDiv.innerHTML = '<div class="dp-header">📋 讨论过程 (' + steps.length + ' 步)</div><div class="dp-body">' + bodyHtml + '</div>';
+            asstDiv.appendChild(dpDiv);
+          }).catch(() => {});
+          promises.push(p);
+        }
+      }
+      return Promise.all(promises);
+    })
+    .then(() => { const c = document.getElementById('chatMessages'); if (c) c.scrollTop = c.scrollHeight; })
+    .catch(() => {});
+});
+
+function populateAgentSelect() {
+  const sel = document.getElementById('agentSelect');
+  sel.innerHTML = agents.map(a => `<option value="${a.id}">${a.icon || '🤖'} ${escapeHtml(a.display_name || a.name)}</option>`).join('');
+}
+
+let isEditing = false;
+function toggleEdit() {
+  isEditing = !isEditing;
+  const sidebar = document.getElementById('memberSidebar');
+  const btn = document.getElementById('editToggleBtn');
+  if (isEditing) {
+    sidebar.classList.add('editing');
+    btn.textContent = '🔒 完成';
+    const cards = document.querySelectorAll('#memberList .member-card');
+    originalMembers = Array.from(cards).map(c => ({
+      agent_id: parseInt(c.dataset.agentId, 10),
+      role_in_team: c.querySelector('.m-role').textContent === '成员' ? '' : c.querySelector('.m-role').textContent
+    }));
+  } else { sidebar.classList.remove('editing'); btn.textContent = '✏️ 编辑'; }
+}
+
+function addMember() {
+  const sel = document.getElementById('agentSelect');
+  const agentId = parseInt(sel.value, 10);
+  const agent = agents.find(a => a.id === agentId);
+  if (!agent) return;
+  const list = document.getElementById('memberList');
+  if (list.querySelector('.member-card[data-agent-id="' + agentId + '"]')) { showToast('该成员已在团队中', 'warning'); return; }
+  const div = document.createElement('div');
+  div.className = 'member-card';
+  div.dataset.agentId = agentId;
+  div.innerHTML = '<button class="remove-member-btn" onclick="removeMember(this)" title="移除">×</button><div class="m-icon">' + (agent.icon || '🤖') + '</div><div class="m-name">' + escapeHtml(agent.display_name || agent.name) + '</div><div class="m-role">成员</div>';
+  list.appendChild(div);
+}
+function removeMember(btn) { btn.closest('.member-card').remove(); }
+
+function saveMembers() {
+  const cards = document.querySelectorAll('#memberList .member-card');
+  const members = Array.from(cards).map(c => ({
+    agent_id: parseInt(c.dataset.agentId, 10),
+    role_in_team: c.querySelector('.m-role').textContent === '成员' ? '' : c.querySelector('.m-role').textContent,
+    task_rules: ''
+  }));
+  fetch('/api/teams/update', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: teamId, members }) })
+    .then(r => r.json()).then(data => {
+      if (data.error) { showToast('保存失败: ' + data.error, 'error'); return; }
+      isEditing = false;
+      document.getElementById('memberSidebar').classList.remove('editing');
+      document.getElementById('editToggleBtn').textContent = '✏️ 编辑';
+      showToast('团队成员已更新', 'success');
+      const msgDiv = document.querySelector('.chat-message.assistant .msg-bubble');
+      if (msgDiv) {
+        const names = Array.from(cards).map(c => c.querySelector('.m-icon').textContent + c.querySelector('.m-name').textContent).join(' · ');
+        const workflowLabels = { sequential: '➡️ 顺序执行', parallel: '🔀 并行讨论', debate: '⚖️ 辩论表决' };
+        msgDiv.innerHTML = `✅ 团队成员已更新！<br>当前成员：${names}<br>协作模式：${workflowLabels['{{ team.workflow_type }}'] || '{{ team.workflow_type }}'}<br><br>请输入问题开始新的讨论。`;
+      }
+    })
+    .catch(err => showToast('保存失败: ' + err.message, 'error'));
+}
+
+function cancelEdit() {
+  const list = document.getElementById('memberList');
+  list.innerHTML = originalMembers.map(m => {
+    const agent = agents.find(a => a.id === m.agent_id);
+    if (!agent) return '';
+    return `<div class="member-card" data-agent-id="${m.agent_id}"><button class="remove-member-btn" onclick="removeMember(this)" title="移除">×</button><div class="m-icon">${agent.icon || '🤖'}</div><div class="m-name">${escapeHtml(agent.display_name || agent.name)}</div><div class="m-role">${escapeHtml(m.role_in_team || '成员')}</div></div>`;
+  }).join('');
+  isEditing = false;
+  document.getElementById('memberSidebar').classList.remove('editing');
+  document.getElementById('editToggleBtn').textContent = '✏️ 编辑';
+}
+
+function send() {
+  const input = document.getElementById('questionInput');
+  const question = input.value.trim();
+  if (!question || isRunning) { showToast('正在运行中或输入为空', 'warning'); return; }
+  input.value = '';
+  isRunning = true;
+  document.getElementById('sendBtn').disabled = true;
+  let safetyTimer = setTimeout(function () { isRunning = false; document.getElementById('sendBtn').disabled = false; }, 60000);
+  const container = document.getElementById('chatMessages');
+  const userDiv = document.createElement('div');
+  userDiv.className = 'chat-message user';
+  userDiv.innerHTML = '<div class="msg-bubble">' + question.replace(/</g, '&lt;').replace(/>/g, '&gt;') + '</div>';
+  container.appendChild(userDiv);
+  const assistantDiv = document.createElement('div');
+  assistantDiv.className = 'chat-message assistant';
+  const bubble = document.createElement('div');
+  bubble.className = 'msg-bubble';
+  assistantDiv.appendChild(bubble);
+  container.appendChild(assistantDiv);
+  const dpDiv = document.createElement('div');
+  dpDiv.className = 'discussion-panel';
+  dpDiv.innerHTML = '<div class="dp-header"><span class="dp-status" style="display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--warning);animation:pulse 1s infinite"></span> <span id="dpHeader">正在启动团队...</span></div><div class="dp-body" id="dpBody"></div>';
+  assistantDiv.appendChild(dpDiv);
+  container.scrollTop = container.scrollHeight;
+  const dpBody = dpDiv.querySelector('.dp-body');
+  const dpHeader = dpDiv.querySelector('#dpHeader');
+  fetch('/api/teams/run_stream', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ team_id: teamId, question, session_id: sessionId }) })
+    .then(response => {
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+      function read() {
+        reader.read().then(({ done, value }) => {
+          if (done) { isRunning = false; document.getElementById('sendBtn').disabled = false; clearTimeout(safetyTimer); return; }
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split('\n');
+          buffer = lines.pop() || '';
+          for (const line of lines) {
+            if (line.trim().startsWith('data: ')) {
+              try { handleEvent(JSON.parse(line.trim().slice(6)), dpBody, dpHeader, bubble, container, dpDiv); } catch (e) {}
+            }
+          }
+          read();
+        }).catch(e => {
+          dpBody.innerHTML += '<div class="dp-message" style="background:#ffebee;border-left:3px solid var(--danger)">连接中断: ' + e.message + '</div>';
+          isRunning = false; document.getElementById('sendBtn').disabled = false; clearTimeout(safetyTimer);
+        });
+      }
+      read();
+    })
+    .catch(e => {
+      dpBody.innerHTML += '<div class="dp-message" style="background:#ffebee;border-left:3px solid var(--danger)">连接失败: ' + e.message + '</div>';
+      isRunning = false; document.getElementById('sendBtn').disabled = false; clearTimeout(safetyTimer);
+    });
+}
+
+function handleEvent(evt, dpBody, dpHeader, bubble, container, dpDiv) {
+  if (evt.type === 'start') {
+    dpHeader.textContent = '👥 ' + evt.team_name + ' 已就绪 (' + evt.member_count + '人)';
+  } else if (evt.type === 'agent_start') {
+    dpBody.innerHTML += '<div class="dp-message agent-start">⚡ ' + escapeHtml(evt.agent) + ' 开始分析 (' + evt.order + '/' + evt.total + ')...</div>';
+  } else if (evt.type === 'agent_output') {
+    dpBody.innerHTML += '<div class="dp-message agent-output"><div class="agent-label">📊 ' + escapeHtml(evt.agent) + (evt.round ? ' (第' + evt.round + '轮)' : '') + '</div><div class="agent-content">' + marked.parse(evt.output) + '</div></div>';
+  } else if (evt.type === 'debate_round') {
+    dpBody.innerHTML += '<div class="dp-message debate-round">⚖️ 第' + evt.round + '轮 - ' + escapeHtml(evt.agent) + '</div>';
+  } else if (evt.type === 'summarizing') {
+    dpBody.innerHTML += '<div class="dp-message summarizing">📝 ' + escapeHtml(evt.message) + '</div>';
+  } else if (evt.type === 'done') {
+    const statusDot = dpDiv.querySelector('.dp-status');
+    if (statusDot) statusDot.style.background = '#4caf50';
+    dpHeader.textContent = '✅ 讨论完成';
+    dpBody.innerHTML += '<div class="dp-message done">✅ 团队已完成全部分析</div>';
+    bubble.innerHTML = '<strong>📋 最终答案</strong><br><br>' + marked.parse(evt.answer);
+  } else if (evt.type === 'error') {
+    const statusDot = dpDiv.querySelector('.dp-status');
+    if (statusDot) statusDot.style.background = '#f44336';
+    dpHeader.textContent = '❌ 出错';
+    dpBody.innerHTML += '<div class="dp-message" style="background:#ffebee;border-left:3px solid var(--danger)">❌ ' + escapeHtml(evt.error) + '</div>';
+  }
+  container.scrollTop = container.scrollHeight;
+}
+
+function clearHistory() {
+  if (!confirm('确定清空所有对话历史？')) return;
+  fetch('/api/teams/' + teamId + '/clear', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ session_id: sessionId }) })
+    .then(r => r.json()).then(() => {
+      document.getElementById('chatMessages').innerHTML = '<div class="chat-message assistant"><div class="msg-bubble">👋 历史已清空，可以开始新的对话。</div></div>';
+    });
+}
+window.send = send;
+</script>
+{% endblock %}

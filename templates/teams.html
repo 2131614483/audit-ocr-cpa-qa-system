@@ -1,0 +1,343 @@
+{% extends "base.html" %}
+{% set active = 'teams' %}
+{% block title %}团队设计器 · 审计CPA综合系统{% endblock %}
+{% block page_title %}👥 团队设计器{% endblock %}
+{% block head %}
+<style>
+  .discussion-panel{margin-top:12px;border:1px solid var(--border);border-radius:10px;overflow:hidden;max-height:340px;display:flex;flex-direction:column}
+  .discussion-panel .dp-header{padding:10px 14px;background:var(--primary-soft);font-size:13px;font-weight:600;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:8px}
+  .discussion-panel .dp-body{flex:1;overflow-y:auto;padding:10px 14px;background:var(--bg)}
+  .dp-message{margin-bottom:8px;padding:8px 12px;border-radius:8px;font-size:12px;line-height:1.5;animation:dpIn .3s ease}
+  @keyframes dpIn{from{opacity:0;transform:translateY(5px)}to{opacity:1;transform:none}}
+  .dp-message.agent-start{background:#eef0ff;border-left:3px solid var(--primary)}
+  .dp-message.agent-output{background:var(--surface);border:1px solid var(--border)}
+  .dp-message.agent-output .agent-label{font-weight:600;color:var(--primary);margin-bottom:4px}
+  .dp-message.agent-output .agent-content{color:var(--text-2);white-space:pre-wrap;max-height:120px;overflow-y:auto}
+  .dp-message.debate-round{background:#fff8e1;border-left:3px solid var(--warning)}
+  .dp-message.summarizing{background:#e8f5e9;border-left:3px solid var(--success);font-style:italic}
+  .dp-message.done{background:#e8f5e9;border-left:3px solid var(--success);font-weight:600}
+  .dp-message.error{background:#ffebee;border-left:3px solid var(--danger);color:#c62828}
+  .dp-status{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:6px}
+  .dp-status.running{background:var(--warning);animation:pulse 1s infinite}
+  .dp-status.done{background:var(--success)}
+  .dp-status.error{background:var(--danger)}
+  @keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
+  .member-list{border:1px solid var(--border);border-radius:8px;padding:12px}
+  .member-item{display:flex;align-items:center;gap:10px;padding:8px 10px;background:var(--bg);border-radius:8px;margin-bottom:6px}
+  .member-item .info{flex:1}
+  .member-item .info .name{font-size:13px;font-weight:600}
+  .member-item .info .role{font-size:12px;color:var(--text-3)}
+  .member-item .remove-btn{width:22px;height:22px;border-radius:50%;border:none;background:var(--danger);color:#fff;cursor:pointer;font-size:12px}
+  .add-member-area{margin-top:8px;display:flex;gap:8px}
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="toolbar">
+  <span class="text-2">组合多个 Agent，实现多轮协作：顺序执行 / 并行讨论 / 辩论表决</span>
+  <span class="spacer"></span>
+  <button class="btn btn-primary" onclick="openCreateModal()">＋ 新建团队</button>
+</div>
+<div id="teamGrid" class="grid-2" style="grid-template-columns:repeat(auto-fill,minmax(300px,1fr))">
+  <div class="empty-state" style="grid-column:1/-1">👥 加载中…</div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+let agents = [], teams = [], teamMembers = [];
+let discussionEvents = [];
+const WORKFLOW_LABELS = { sequential: '➡️ 顺序执行', parallel: '🔀 并行讨论', debate: '⚖️ 辩论表决' };
+const WORKFLOW_CLASSES = { sequential: 'badge-blue', parallel: 'badge-low', debate: 'badge-medium' };
+
+function loadTeams() {
+  fetch('/api/teams/list').then(r => r.json()).then(data => {
+    teams = data;
+    const grid = document.getElementById('teamGrid');
+    if (!teams.length) {
+      grid.innerHTML = '<div class="empty-state" style="grid-column:1/-1"><div style="font-size:48px">👥</div><div>还没有团队，创建一个吧</div></div>';
+      return;
+    }
+    grid.innerHTML = teams.map(t => `
+      <div class="card" style="padding:18px;cursor:pointer;transition:box-shadow .15s" onclick="location.href='/teams/${t.id}'">
+        <div style="font-size:16px;font-weight:600">${escapeHtml(t.name)}</div>
+        <span class="badge ${WORKFLOW_CLASSES[t.workflow_type] || 'badge-gray'}" style="margin-top:6px">${WORKFLOW_LABELS[t.workflow_type] || t.workflow_type}</span>
+        <div class="text-2" style="font-size:13px;margin-top:6px;line-height:1.5">${escapeHtml(t.description || '')}</div>
+        <div class="text-3" style="font-size:12px;margin-top:8px">决策: ${escapeHtml(t.decision_mode)} | 轮次: ${t.max_rounds}${t.model_override ? ' | 模型: ' + escapeHtml(t.model_override) : ''}</div>
+        ${t.custom_prompt ? '<div style="font-size:11px;color:var(--primary);margin-top:4px">📋 自定义指令已启用</div>' : ''}
+        <div id="avatars-${t.id}" style="margin-top:10px;display:flex;gap:4px"></div>
+        <div style="margin-top:12px;display:flex;gap:6px">
+          <button class="btn btn-outline btn-sm" onclick="event.stopPropagation();editTeam(${t.id})">⚙️ 编辑</button>
+          ${!t.is_builtin ? `<button class="btn btn-danger btn-sm" onclick="event.stopPropagation();deleteTeam(${t.id})">删除</button>` : ''}
+        </div>
+      </div>`).join('');
+    teams.forEach(t => {
+      fetch('/api/teams/get', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: t.id }) })
+        .then(r => r.json()).then(data => {
+          const div = document.getElementById('avatars-' + t.id);
+          if (div && data.members) div.innerHTML = data.members.map(m => `<span style="width:28px;height:28px;border-radius:50%;background:var(--primary-soft);display:flex;align-items:center;justify-content:center;font-size:14px" title="${escapeHtml(m.display_name || m.agent_name)}">${m.icon || '🤖'}</span>`).join('');
+        });
+    });
+  });
+}
+
+function loadAgents() {
+  return fetch('/api/agents/list').then(r => r.json()).then(data => { agents = data; });
+}
+
+function teamModalHtml(title, editId) {
+  return `
+    <div class="form-group"><label>团队名称</label><input class="form-control" id="f_name" placeholder="如：完整审计工作流"></div>
+    <div class="form-group"><label>描述</label><textarea class="form-control" id="f_description" placeholder="描述这个团队的用途..."></textarea></div>
+    <div class="form-row">
+      <div class="form-group"><label>协作模式</label>
+        <select class="form-select" id="f_workflow_type">
+          <option value="sequential">➡️ 顺序执行</option><option value="parallel">🔀 并行讨论</option><option value="debate">⚖️ 辩论表决</option>
+        </select></div>
+      <div class="form-group"><label>最大轮次</label><input class="form-control" id="f_max_rounds" type="number" value="3" min="1" max="10"></div>
+      <div class="form-group"><label>决策方式</label>
+        <select class="form-select" id="f_decision_mode"><option value="consensus">共识决策</option><option value="majority">多数表决</option><option value="autocratic">最终裁决</option></select></div>
+    </div>
+    <div class="form-group"><label>团队成员</label>
+      <div class="member-list" id="memberList"><div style="text-align:center;padding:14px;color:var(--text-3);font-size:13px">还没有成员，从下方添加</div></div>
+      <div class="add-member-area">
+        <select class="form-select flex-1" id="agentSelect"></select>
+        <input class="form-control" id="memberRole" placeholder="职责" style="flex:.5">
+        <input class="form-control" id="memberRules" placeholder="自定义规则" style="flex:.8">
+        <button class="btn btn-primary btn-sm" onclick="addMember()">＋ 添加</button>
+      </div>
+    </div>
+    <div class="form-group" style="border-top:1px solid var(--border);padding-top:16px;margin-top:8px">
+      <label style="color:var(--primary);font-size:14px">⚙️ 自定义高级设置</label>
+      <div class="form-group"><label>团队自定义指令 <span class="text-3" style="font-weight:400;font-size:12px">（所有成员执行时附加的全局指令）</span></label>
+        <textarea class="form-control" id="f_custom_prompt" placeholder="如：请严格引用CPA教材原文，答案不超过800字..." style="min-height:60px"></textarea></div>
+      <div class="form-group"><label>模型覆盖 <span class="text-3" style="font-weight:400;font-size:12px">（留空则使用默认）</span></label>
+        <select class="form-select" id="f_model_override">
+          <option value="">默认 (deepseek-chat)</option><option value="deepseek-chat">DeepSeek Chat</option>
+          <option value="deepseek-reasoner">DeepSeek Reasoner</option><option value="gpt-4o">GPT-4o</option>
+          <option value="gpt-4o-mini">GPT-4o Mini</option><option value="claude-3-opus">Claude 3 Opus</option>
+          <option value="claude-3-sonnet">Claude 3 Sonnet</option>
+        </select></div>
+    </div>
+    <div id="testResultSection" style="display:none">
+      <label>讨论过程</label>
+      <div class="discussion-panel">
+        <div class="dp-header"><span class="dp-status" id="dpStatus"></span><span id="dpHeaderText">等待运行...</span></div>
+        <div class="dp-body" id="dpBody"></div>
+      </div>
+      <div class="result-box" id="testResult" style="display:none;margin-top:12px;padding:12px;background:var(--bg);border-radius:8px;font-size:13px;line-height:1.6;max-height:200px;overflow-y:auto;white-space:pre-wrap;border:1px solid var(--border)"></div>
+      <div id="exportButtons" style="display:none;margin-top:8px;gap:6px">
+        <button class="btn btn-outline btn-sm" onclick="exportTxt()">📄 导出 TXT</button>
+        <button class="btn btn-outline btn-sm" onclick="exportMd()">📝 导出 MD</button>
+      </div>
+    </div>`;
+}
+
+function openCreateModal() {
+  window._teamEditId = '';
+  openModal({ title: '新建团队', size: 'modal-lg', body: teamModalHtml('新建团队', ''),
+    foot: '<div style="display:flex;justify-content:space-between;width:100%"><button class="btn btn-primary" id="testBtn" onclick="testTeam()">🧪 测试运行</button><div><button class="btn btn-outline" onclick="closeModal()">取消</button><button class="btn btn-primary" onclick="saveTeam()">💾 保存</button></div></div>' });
+  teamMembers = [];
+  renderMemberList();
+  populateAgentSelect();
+}
+
+function populateAgentSelect() {
+  const sel = document.getElementById('agentSelect');
+  sel.innerHTML = agents.map(a => `<option value="${a.id}">${a.icon || '🤖'} ${escapeHtml(a.display_name || a.name)}</option>`).join('');
+}
+
+function addMember() {
+  const sel = document.getElementById('agentSelect');
+  const role = document.getElementById('memberRole').value.trim();
+  const rules = document.getElementById('memberRules').value.trim();
+  const agentId = parseInt(sel.value, 10);
+  const agent = agents.find(a => a.id === agentId);
+  if (!agent) return;
+  if (teamMembers.some(m => m.agent_id === agentId)) { showToast('已添加该成员', 'warning'); return; }
+  teamMembers.push({ agent_id: agentId, agent_name: agent.name, display_name: agent.display_name, icon: agent.icon, role_in_team: role, task_rules: rules });
+  document.getElementById('memberRole').value = '';
+  document.getElementById('memberRules').value = '';
+  renderMemberList();
+}
+function removeMember(idx) { teamMembers.splice(idx, 1); renderMemberList(); }
+
+function renderMemberList() {
+  const list = document.getElementById('memberList');
+  if (!list) return;
+  if (!teamMembers.length) { list.innerHTML = '<div style="text-align:center;padding:14px;color:var(--text-3);font-size:13px">还没有成员，从下方添加</div>'; return; }
+  list.innerHTML = teamMembers.map((m, i) => `
+    <div class="member-item">
+      <span style="color:var(--text-3)">⠿</span><span>${m.icon || '🤖'}</span>
+      <div class="info"><div class="name">${escapeHtml(m.display_name || m.agent_name)}</div>
+        <div class="role">${escapeHtml(m.role_in_team || '普通成员')}${m.task_rules ? ' · 📋 ' + escapeHtml(m.task_rules) : ''}</div></div>
+      <button class="remove-btn" onclick="removeMember(${i})">×</button>
+    </div>`).join('');
+}
+
+function saveTeam() {
+  const id = window._teamEditId || '';
+  const data = {
+    name: document.getElementById('f_name').value,
+    description: document.getElementById('f_description').value,
+    workflow_type: document.getElementById('f_workflow_type').value,
+    max_rounds: parseInt(document.getElementById('f_max_rounds').value, 10) || 3,
+    decision_mode: document.getElementById('f_decision_mode').value,
+    custom_prompt: document.getElementById('f_custom_prompt').value,
+    model_override: document.getElementById('f_model_override').value,
+    members: teamMembers
+  };
+  if (!data.name) { showToast('请输入团队名称', 'warning'); return; }
+  const url = id ? '/api/teams/update' : '/api/teams/create';
+  if (id) data.id = id;
+  fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) })
+    .then(r => r.json()).then(() => { closeModal(); loadTeams(); showToast('已保存', 'success'); });
+}
+
+function editTeam(id) {
+  fetch('/api/teams/get', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id }) })
+    .then(r => r.json()).then(data => {
+      window._teamEditId = data.id;
+      openModal({ title: '编辑 ' + data.name, size: 'modal-lg', body: teamModalHtml('编辑', data.id),
+        foot: '<div style="display:flex;justify-content:space-between;width:100%"><button class="btn btn-primary" id="testBtn" onclick="testTeam()">🧪 测试运行</button><div><button class="btn btn-outline" onclick="closeModal()">取消</button><button class="btn btn-primary" onclick="saveTeam()">💾 保存</button></div></div>' });
+      document.getElementById('f_name').value = data.name || '';
+      document.getElementById('f_description').value = data.description || '';
+      document.getElementById('f_workflow_type').value = data.workflow_type || 'sequential';
+      document.getElementById('f_max_rounds').value = data.max_rounds || 3;
+      document.getElementById('f_decision_mode').value = data.decision_mode || 'consensus';
+      document.getElementById('f_custom_prompt').value = data.custom_prompt || '';
+      document.getElementById('f_model_override').value = data.model_override || '';
+      teamMembers = (data.members || []).map(m => ({ agent_id: m.agent_id, agent_name: m.agent_name, display_name: m.display_name, icon: m.icon, role_in_team: m.role_in_team || '', task_rules: m.task_rules || '' }));
+      renderMemberList();
+      populateAgentSelect();
+    });
+}
+
+function deleteTeam(id) {
+  if (!confirm('确定删除该团队？')) return;
+  fetch('/api/teams/delete', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id }) })
+    .then(r => r.json()).then(() => { loadTeams(); showToast('已删除', 'success'); });
+}
+
+function testTeam() {
+  const question = prompt('输入测试问题：', '什么是会计五步法？');
+  if (!question) return;
+  const id = window._teamEditId;
+  if (!id) { showToast('请先保存团队', 'warning'); return; }
+  const btn = document.getElementById('testBtn');
+  btn.disabled = true; btn.textContent = '⏳ 运行中...';
+  const section = document.getElementById('testResultSection');
+  const dpBody = document.getElementById('dpBody');
+  const dpStatus = document.getElementById('dpStatus');
+  const dpHeader = document.getElementById('dpHeaderText');
+  const testResult = document.getElementById('testResult');
+  section.style.display = 'block';
+  testResult.style.display = 'none';
+  document.getElementById('exportButtons').style.display = 'none';
+  dpBody.innerHTML = '';
+  discussionEvents = [];
+  dpStatus.className = 'dp-status running';
+  dpHeader.textContent = '正在启动...';
+  fetch('/api/teams/run_stream', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ team_id: parseInt(id, 10), question }) })
+    .then(response => {
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+      function readChunk() {
+        reader.read().then(({ done, value }) => {
+          if (done) { btn.disabled = false; btn.textContent = '🧪 测试运行'; return; }
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split('\n');
+          buffer = lines.pop() || '';
+          for (const line of lines) {
+            if (line.trim().startsWith('data: ')) {
+              try { handleDiscussionEvent(JSON.parse(line.trim().slice(6))); } catch (e) {}
+            }
+          }
+          readChunk();
+        });
+      }
+      readChunk();
+    })
+    .catch(e => { dpBody.innerHTML += '<div class="dp-message error">连接失败: ' + e + '</div>'; btn.disabled = false; btn.textContent = '🧪 测试运行'; });
+}
+
+function handleDiscussionEvent(event) {
+  const dpBody = document.getElementById('dpBody');
+  const dpStatus = document.getElementById('dpStatus');
+  const dpHeader = document.getElementById('dpHeaderText');
+  const testResult = document.getElementById('testResult');
+  discussionEvents.push(event);
+  if (event.type === 'start') {
+    dpStatus.className = 'dp-status running';
+    dpHeader.textContent = '👥 ' + event.team_name + ' (' + event.member_count + '人, ' + event.workflow_type + ')';
+    dpBody.innerHTML = '<div class="dp-message agent-start">🚀 团队已启动，等待专家分析...</div>';
+  } else if (event.type === 'agent_start') {
+    dpBody.innerHTML += '<div class="dp-message agent-start">⚡ ' + escapeHtml(event.agent) + ' 开始分析 (' + event.order + '/' + event.total + ')...</div>';
+  } else if (event.type === 'agent_output') {
+    const maxPreview = 300;
+    const preview = event.output.length > maxPreview ? event.output.substring(0, maxPreview) + '...' : event.output;
+    dpBody.innerHTML += '<div class="dp-message agent-output"><div class="agent-label">📊 ' + escapeHtml(event.agent) + ' 的分析结果</div><div class="agent-content">' + escapeHtml(preview) + '</div></div>';
+  } else if (event.type === 'debate_round') {
+    dpBody.innerHTML += '<div class="dp-message debate-round">⚖️ 第' + event.round + '轮辩论 - ' + escapeHtml(event.agent) + '</div>';
+  } else if (event.type === 'summarizing') {
+    dpBody.innerHTML += '<div class="dp-message summarizing">📝 ' + escapeHtml(event.message) + '</div>';
+  } else if (event.type === 'done') {
+    dpStatus.className = 'dp-status done';
+    dpHeader.textContent = '✅ 讨论完成';
+    dpBody.innerHTML += '<div class="dp-message done">✅ 团队协作完成！</div>';
+    testResult.style.display = 'block';
+    testResult.textContent = event.answer;
+    document.getElementById('exportButtons').style.display = 'flex';
+  } else if (event.type === 'error') {
+    dpStatus.className = 'dp-status error';
+    dpHeader.textContent = '❌ 运行出错';
+    dpBody.innerHTML += '<div class="dp-message error">❌ ' + escapeHtml(event.error) + '</div>';
+    testResult.style.display = 'block';
+    testResult.textContent = '错误: ' + event.error;
+    document.getElementById('exportButtons').style.display = 'flex';
+  }
+  dpBody.scrollTop = dpBody.scrollHeight;
+}
+
+function buildDiscussionText() {
+  const lines = [];
+  for (const evt of discussionEvents) {
+    if (evt.type === 'start') lines.push(`🚀 团队启动: ${evt.team_name} (${evt.member_count}人, ${evt.workflow_type})`, '');
+    else if (evt.type === 'agent_start') lines.push(`⚡ [${evt.agent}] 开始分析 (${evt.order}/${evt.total})`);
+    else if (evt.type === 'agent_output') lines.push(`📊 [${evt.agent}] 分析结果:`, evt.output, '');
+    else if (evt.type === 'debate_round') lines.push(`⚖️ 第${evt.round}轮 - ${evt.agent}`);
+    else if (evt.type === 'summarizing') lines.push(`📝 ${evt.message}`, '');
+    else if (evt.type === 'done') lines.push('', '✅ 最终结果:', evt.answer);
+    else if (evt.type === 'error') lines.push('', '❌ 错误:', evt.error);
+  }
+  return lines.join('\n');
+}
+function buildDiscussionMd() {
+  const lines = [];
+  for (const evt of discussionEvents) {
+    if (evt.type === 'start') lines.push(`# 🚀 团队协作: ${evt.team_name}\n> ${evt.member_count}人 · ${evt.workflow_type}\n`);
+    else if (evt.type === 'agent_start') lines.push(`## ⚡ ${evt.agent} 开始分析\n> 第 ${evt.order}/${evt.total} 步\n`);
+    else if (evt.type === 'agent_output') lines.push(`### 📊 ${evt.agent}\n\n${evt.output}\n`);
+    else if (evt.type === 'debate_round') lines.push(`### ⚖️ 第${evt.round}轮 - ${evt.agent}\n`);
+    else if (evt.type === 'summarizing') lines.push(`> 📝 ${evt.message}\n`);
+    else if (evt.type === 'done') lines.push(`---\n\n## ✅ 最终结果\n\n${evt.answer}\n`);
+    else if (evt.type === 'error') lines.push(`---\n\n## ❌ 错误\n\n${evt.error}\n`);
+  }
+  return lines.join('\n');
+}
+function downloadFile(content, filename, mime) {
+  const blob = new Blob([content], { type: mime });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = filename;
+  document.body.appendChild(a); a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+function exportTxt() { const n = (discussionEvents.find(e => e.type === 'start') || {}).team_name || '讨论记录'; downloadFile(buildDiscussionText(), n + '.txt', 'text/plain;charset=utf-8'); }
+function exportMd() { const n = (discussionEvents.find(e => e.type === 'start') || {}).team_name || '讨论记录'; downloadFile(buildDiscussionMd(), n + '.md', 'text/markdown;charset=utf-8'); }
+
+loadAgents().then(() => loadTeams());
+</script>
+{% endblock %}

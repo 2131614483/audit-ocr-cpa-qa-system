@@ -1,0 +1,714 @@
+{% extends "base.html" %}
+{% set active = 'index' %}
+{% block title %}智能对话 · 审计CPA综合系统{% endblock %}
+{% block page_title %}💬 智能对话{% endblock %}
+{% block head %}
+<script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+<style>
+  .chat-layout{display:flex;gap:20px;height:calc(100vh - var(--topbar-h) - 48px);min-height:480px}
+  .chat-panel{width:300px;flex-shrink:0;overflow-y:auto;display:flex;flex-direction:column;gap:14px;padding-right:4px}
+  .chat-main{flex:1;display:flex;flex-direction:column;min-width:0;padding:0}
+
+  /* 控制面板卡片 */
+  .panel-section{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);box-shadow:var(--shadow);overflow:hidden}
+  .panel-head{display:flex;align-items:center;justify-content:space-between;padding:12px 16px;cursor:pointer;user-select:none;font-size:14px;font-weight:600}
+  .panel-head:hover{background:var(--bg)}
+  .panel-body{padding:4px 14px 14px;overflow:hidden;transition:max-height .3s ease,opacity .25s}
+  .panel-body.closed{max-height:0;opacity:0;padding-top:0;padding-bottom:0}
+  .panel-arrow{font-size:11px;color:var(--text-3);transition:transform .25s}
+  .panel-arrow.closed{transform:rotate(-90deg)}
+
+  .prompt-item{padding:10px 12px;margin-bottom:6px;background:var(--bg);border-radius:8px;cursor:pointer;border:2px solid transparent;transition:all .15s}
+  .prompt-item:hover{background:#eef2f7}
+  .prompt-item.active{background:var(--primary);color:#fff;border-color:var(--primary)}
+  .prompt-name{font-weight:600;font-size:13px}
+  .prompt-desc{font-size:11px;margin-top:2px;opacity:.7}
+  .skill-item{display:flex;align-items:center;justify-content:space-between;padding:9px 12px;margin-bottom:6px;background:var(--bg);border-radius:8px}
+  .skill-name{font-size:13px;font-weight:500}
+  .skill-desc{font-size:11px;color:var(--text-3);margin-top:1px}
+  .skill-toggle{width:38px;height:20px;background:#ddd;border-radius:10px;position:relative;cursor:pointer;flex-shrink:0;transition:background .15s}
+  .skill-toggle.active{background:var(--primary)}
+  .skill-toggle::after{content:'';position:absolute;width:16px;height:16px;background:#fff;border-radius:50%;top:2px;left:2px;transition:left .2s}
+  .skill-toggle.active::after{left:20px}
+
+  .mode-item{display:flex;align-items:center;gap:10px;padding:9px 12px;border-radius:8px;cursor:pointer;border:2px solid transparent;background:var(--bg);margin-bottom:4px;transition:all .15s}
+  .mode-item.active{background:var(--primary);color:#fff;border-color:var(--primary)}
+  .mode-item input[type="radio"]{accent-color:var(--primary);width:15px;height:15px;cursor:pointer;flex-shrink:0}
+  .mode-item .mode-name{font-size:13px;font-weight:500}
+  .mode-item .mode-desc{font-size:11px;opacity:.75;margin-top:1px}
+
+  .book-select-all{display:flex;align-items:center;gap:8px;padding:7px 9px;margin-bottom:6px;background:var(--bg);border-radius:6px;font-size:12px;font-weight:500;color:var(--text-2);cursor:pointer}
+  .book-select-all input{accent-color:var(--primary);width:14px;height:14px}
+  .book-item{display:flex;align-items:center;gap:8px;padding:5px 9px;border-radius:6px;cursor:pointer;font-size:12px;color:var(--text-2);transition:background .15s}
+  .book-item:hover{background:var(--primary-soft)}
+  .book-item input{accent-color:var(--primary);width:14px;height:14px;cursor:pointer;flex-shrink:0}
+  .book-selector{max-height:220px;overflow-y:auto}
+  .book-group-label{font-size:11px;font-weight:600;color:var(--text-3);padding:6px 4px 2px;border-bottom:1px solid var(--border);margin-bottom:4px}
+  .book-selector-status{font-size:11px;color:var(--text-3);padding:4px 8px}
+
+  .upload-btn{display:block;width:100%;padding:9px;background:var(--bg);border:2px dashed var(--border-strong);border-radius:8px;cursor:pointer;text-align:center;margin-bottom:8px;font-size:13px;transition:all .15s}
+  .upload-btn:hover{border-color:var(--primary);background:var(--primary-soft)}
+  #fileInput,#imageInput{display:none}
+  #fileList,#imageList{font-size:12px;color:var(--text-3);margin-bottom:6px}
+
+  .dream-btn{width:100%;padding:11px;background:linear-gradient(135deg,#f59e0b,#ef4444);color:#fff;border:none;border-radius:8px;cursor:pointer;font-size:13px;font-weight:600}
+  .dream-btn:disabled{opacity:.5;cursor:not-allowed}
+  #dreamProgress{font-size:12px;color:var(--text-2);margin-top:8px}
+  #dreamStats{font-size:12px;color:var(--text-3);margin-top:8px;line-height:1.7}
+  #graphStatus{font-size:11px;color:var(--text-3);margin-top:6px;display:none}
+
+  /* 聊天区 */
+  .chat-container{flex:1;overflow-y:auto;padding:20px 26px;display:flex;flex-direction:column;gap:6px}
+  .chat-message{max-width:88%;margin-bottom:18px;animation:fadeIn .3s ease}
+  @keyframes fadeIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+  .chat-message.user{align-self:flex-end;text-align:right}
+  .chat-message.assistant{align-self:flex-start;text-align:left}
+  .message-bubble{display:inline-block;padding:13px 18px;border-radius:16px;line-height:1.75;max-width:100%;text-align:left;font-size:14px}
+  .user .message-bubble{background:var(--primary);color:#fff;border-bottom-right-radius:4px}
+  .assistant .message-bubble{background:var(--surface);border:1px solid var(--border);box-shadow:var(--shadow);border-bottom-left-radius:4px}
+  .message-time{font-size:11px;color:var(--text-3);margin-top:6px;text-align:right}
+  .retry-btn{display:inline-block;margin-left:8px;cursor:pointer;color:var(--primary);font-size:14px}
+  .retry-btn.spinning{animation:spin 1s linear infinite;display:inline-block}
+  @keyframes spin{to{transform:rotate(360deg)}}
+  .pin-btn{display:inline-flex;align-items:center;gap:4px;margin-top:6px;padding:3px 10px;font-size:12px;border:1px solid var(--border);border-radius:12px;background:var(--bg);color:var(--text-3);cursor:pointer;transition:all .15s}
+  .pin-btn.pinned{background:var(--primary);color:#fff;border-color:var(--primary)}
+  .typing-indicator{display:inline-flex;align-items:center;gap:8px;padding:13px 18px;background:var(--bg);border-radius:16px}
+  .typing-dots{display:flex;gap:4px}
+  .typing-dot{width:8px;height:8px;background:var(--primary);border-radius:50%;animation:typing 1.4s infinite}
+  @keyframes typing{0%,80%,100%{opacity:.5;transform:scale(.8)}40%{opacity:1;transform:scale(1)}}
+  .typing-dot:nth-child(2){animation-delay:.2s}
+  .typing-dot:nth-child(3){animation-delay:.4s}
+
+  .thinking-container{margin-top:12px;padding:12px 14px;background:#fff8e6;border-radius:10px;border-left:4px solid var(--warning)}
+  .thinking-header{font-weight:600;color:#b45309;font-size:13px;margin-bottom:6px}
+  .thinking-content{font-size:13px;color:#7c5a10;font-style:italic}
+
+  .knowledge-sources{margin-top:12px;padding:13px;background:var(--surface);border-radius:10px;border:1px solid var(--border)}
+  .knowledge-header{display:flex;align-items:center;justify-content:space-between;cursor:pointer;user-select:none}
+  .knowledge-title{font-weight:600;color:var(--primary);font-size:14px}
+  .knowledge-toggle{width:24px;height:24px;background:var(--primary);color:#fff;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:14px}
+  .knowledge-content{margin-top:10px}
+  .knowledge-content.hide{display:none}
+  .knowledge-category-header{font-size:12px;font-weight:600;color:var(--text-2);padding:6px 10px;margin:6px 0;background:var(--bg);border-radius:6px}
+  .knowledge-item{padding:11px;margin-bottom:8px;background:var(--bg);border-radius:8px;border-left:3px solid var(--primary)}
+  .knowledge-item:last-child{margin-bottom:0}
+  .knowledge-similarity{display:inline-block;padding:2px 9px;background:var(--primary);color:#fff;border-radius:12px;font-size:12px;font-weight:600;margin-bottom:6px}
+  .knowledge-text{font-size:13px;line-height:1.6;color:var(--text-2)}
+  .knowledge-source{font-size:12px;color:var(--text-3);margin-top:4px}
+
+  .pinned-context-item{padding:7px 10px;margin-bottom:5px;background:var(--primary-soft);border-radius:6px;border-left:3px solid var(--primary);font-size:12px;line-height:1.5;word-break:break-all;display:flex;justify-content:space-between;align-items:flex-start;gap:6px}
+  .pinned-context-item .role-tag{font-size:10px;padding:1px 6px;border-radius:8px;background:var(--primary);color:#fff;flex-shrink:0}
+  .pinned-context-item .role-tag.user{background:#764ba2}
+  .pinned-context-item .context-text{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .pinned-context-item .unpin-btn{flex-shrink:0;width:16px;height:16px;border:none;border-radius:50%;background:var(--danger);color:#fff;font-size:10px;cursor:pointer;display:flex;align-items:center;justify-content:center;opacity:.65}
+  .pinned-context-item .unpin-btn:hover{opacity:1}
+  .pinned-empty{font-size:12px;color:var(--text-3);text-align:center;padding:8px 0}
+
+  .chat-input-bar{padding:14px 20px;border-top:1px solid var(--border)}
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="chat-layout">
+  <!-- 左侧控制面板 -->
+  <aside class="chat-panel">
+    <div class="panel-section">
+      <div class="panel-head" onclick="toggleSection('roleSection')"><span>👤 角色选择</span><span class="panel-arrow" id="arrow-roleSection">▼</span></div>
+      <div class="panel-body" id="body-roleSection"><div id="promptList"></div></div>
+    </div>
+    <div class="panel-section">
+      <div class="panel-head" onclick="toggleSection('skillsSection')"><span>⚡ 技能开关</span><span class="panel-arrow" id="arrow-skillsSection">▼</span></div>
+      <div class="panel-body" id="body-skillsSection"><div id="skillList"></div></div>
+    </div>
+    <div class="panel-section">
+      <div class="panel-head" onclick="toggleSection('modeSection')"><span>🔍 检索模式</span><span class="panel-arrow" id="arrow-modeSection">▼</span></div>
+      <div class="panel-body" id="body-modeSection">
+        <div class="mode-item active" data-mode="vector" onclick="selectMode('vector', this)">
+          <input type="radio" name="searchMode" value="vector" checked onchange="selectMode('vector', this.parentElement)">
+          <div><div class="mode-name">向量检索</div><div class="mode-desc">Embedding 语义匹配</div></div></div>
+        <div class="mode-item" data-mode="bm25" onclick="selectMode('bm25', this)">
+          <input type="radio" name="searchMode" value="bm25" onchange="selectMode('bm25', this.parentElement)">
+          <div><div class="mode-name">全文检索</div><div class="mode-desc">BM25 关键词精确匹配</div></div></div>
+        <div class="mode-item" data-mode="hybrid" onclick="selectMode('hybrid', this)">
+          <input type="radio" name="searchMode" value="hybrid" onchange="selectMode('hybrid', this.parentElement)">
+          <div><div class="mode-name">混合检索</div><div class="mode-desc">向量 + BM25 融合（RRF）</div></div></div>
+        <div class="mode-item" data-mode="graph" onclick="selectMode('graph', this)">
+          <input type="radio" name="searchMode" value="graph" onchange="selectMode('graph', this.parentElement)">
+          <div><div class="mode-name">知识图谱</div><div class="mode-desc">GraphRAG 实体关系检索</div></div></div>
+        <div class="flex gap-8 mt-8">
+          <button class="btn btn-outline btn-sm" style="flex:1" onclick="buildGraph()">🧠 构建图谱</button>
+          <button class="btn btn-outline btn-sm" onclick="checkGraphStatus()" title="查询图谱状态">📊</button>
+        </div>
+        <div id="graphStatus" style="font-size:11px;color:var(--text-3);margin-top:6px;display:none"></div>
+      </div>
+    </div>
+    <div class="panel-section">
+      <div class="panel-head" onclick="toggleSection('bookSection')"><span>📖 教材选择</span><span class="panel-arrow" id="arrow-bookSection">▼</span></div>
+      <div class="panel-body" id="body-bookSection">
+        <div class="book-select-all" onclick="toggleAllBooks(event)">
+          <input type="checkbox" id="selectAllBooks" checked onchange="toggleAllBooksFromCheckbox()">
+          <label for="selectAllBooks" style="cursor:pointer;flex:1">全选 / 取消全选</label>
+          <span class="book-selector-status" id="bookSelectStatus">-- 本</span>
+        </div>
+        <div class="book-selector" id="bookSelector"><div class="book-selector-status">加载中…</div></div>
+      </div>
+    </div>
+    <div class="panel-section">
+      <div class="panel-head" onclick="toggleSection('pinnedSection')"><span>📌 选定上下文</span><span class="panel-arrow" id="arrow-pinnedSection">▼</span></div>
+      <div class="panel-body" id="body-pinnedSection">
+        <div class="pinned-context-section" id="pinnedContextSection"><div class="pinned-empty">消息默认已固定，点击 📌 可取消</div></div>
+      </div>
+    </div>
+    <div class="panel-section">
+      <div class="panel-head" onclick="toggleSection('uploadSection')"><span>📁 文件上传</span><span class="panel-arrow closed" id="arrow-uploadSection">▼</span></div>
+      <div class="panel-body closed" id="body-uploadSection">
+        <label class="upload-btn" for="fileInput">📄 上传文件</label>
+        <input type="file" id="fileInput" accept=".pdf,.doc,.docx,.txt,.md">
+        <div id="fileList"></div>
+        <label class="upload-btn" for="imageInput">🖼️ 上传图片</label>
+        <input type="file" id="imageInput" accept="image/*">
+        <div id="imageList"></div>
+      </div>
+    </div>
+    <div class="panel-section">
+      <div class="panel-head" onclick="toggleSection('dreamSection')"><span>🧠 AI 做梦</span><span class="panel-arrow closed" id="arrow-dreamSection">▼</span></div>
+      <div class="panel-body closed" id="body-dreamSection">
+        <button class="dream-btn" id="dreamBtn" onclick="startDream()">🧠 开始做梦</button>
+        <div id="dreamProgress" style="display:none"></div>
+        <div id="dreamStats"></div>
+      </div>
+    </div>
+  </aside>
+
+  <!-- 主聊天区 -->
+  <div class="chat-main card">
+    <div class="chat-container" id="chatContainer">
+      <div class="chat-message assistant"><div class="message-bubble">您好！我是您的 CPA 考试辅导助手。请问有什么问题需要帮助？</div></div>
+    </div>
+    <div class="chat-input-bar">
+      <div class="chat-input-row">
+        <textarea class="chat-input" id="questionInput" rows="2" placeholder="输入您的问题…（Enter 发送，Shift+Enter 换行）"></textarea>
+        <button class="btn btn-primary btn-lg" onclick="sendMessage()">发送</button>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+let sessionId;
+try { sessionId = localStorage.getItem('cpa_session_id') || 'session_' + Date.now(); localStorage.setItem('cpa_session_id', sessionId); }
+catch (e) { sessionId = 'session_' + Date.now(); }
+const socket = io();
+
+function sendMessage() {
+  const input = document.getElementById('questionInput');
+  const question = input.value.trim();
+  if (!question) return;
+  addMessage('user', question);
+  input.value = '';
+  const reasonMode = document.querySelector('.skill-toggle[data-skill="reason_mode"].active') !== null;
+  const selectedBooks = getSelectedBooks();
+  const searchMode = getSelectedSearchMode();
+  socket.emit('ask_question', { session_id: sessionId, question, use_reason: reasonMode, selected_books: selectedBooks, search_mode: searchMode });
+}
+
+function addMessage(role, content, knowledgeResults = [], knowledgeBase = [], qaHistory = [], dreamKnowledge = []) {
+  const container = document.getElementById('chatContainer');
+  const div = document.createElement('div');
+  div.className = 'chat-message ' + role;
+  const bubble = document.createElement('div');
+  bubble.className = 'message-bubble';
+  if (role === 'assistant') {
+    bubble.innerHTML = marked.parse(content);
+    const hasKB = knowledgeBase.length > 0, hasQA = qaHistory.length > 0, hasDream = dreamKnowledge.length > 0;
+    const totalResults = knowledgeResults.length;
+    if (hasKB || hasQA || hasDream) {
+      const knowledgeDiv = document.createElement('div');
+      knowledgeDiv.className = 'knowledge-sources';
+      const messageId = 'msg_' + Date.now();
+      const modeLabels = { vector: '向量', bm25: '全文', hybrid: '混合', graph: '图谱' };
+      const modeLabel = modeLabels[getSelectedSearchMode()] || '向量';
+      let innerHTML = `<div class="knowledge-header" onclick="toggleKnowledge('${messageId}')">
+        <span class="knowledge-title">📚 知识库检索结果 (${totalResults}条) [<span style="font-weight:400;font-size:11px">${modeLabel}</span>]</span>
+        <span class="knowledge-toggle" id="knowledge-toggle-${messageId}">▶</span></div>
+        <div class="knowledge-content hide" id="knowledge-content-${messageId}">`;
+      if (hasKB) {
+        innerHTML += `<div class="knowledge-category-header">📖 教材知识库 (${knowledgeBase.length}条)</div>`;
+        for (const item of knowledgeBase) {
+          let text = item.summary || item.content.substring(0, 300);
+          innerHTML += `<div class="knowledge-item"><div class="knowledge-similarity">相似度：${(item.similarity * 100).toFixed(1)}%</div>
+            <div class="knowledge-text">${text.substring(0, 300)}${text.length > 300 ? '...' : ''}</div>
+            <div class="knowledge-source">📚 ${escapeHtml(item.source_label || '教材')}</div></div>`;
+        }
+      }
+      if (hasQA) {
+        innerHTML += `<div class="knowledge-category-header" style="margin-top:8px">📋 历史问答 (${qaHistory.length}条)</div>`;
+        for (const item of qaHistory) {
+          let text = item.summary || item.content.substring(0, 300);
+          innerHTML += `<div class="knowledge-item"><div class="knowledge-similarity">相似度：${(item.similarity * 100).toFixed(1)}%</div>
+            <div class="knowledge-text">${text.substring(0, 300)}${text.length > 300 ? '...' : ''}</div>
+            <div class="knowledge-source">📋 ${escapeHtml(item.source_label || '历史问答')}</div></div>`;
+        }
+      }
+      if (hasDream) {
+        innerHTML += `<div class="knowledge-category-header" style="margin-top:8px">🧠 归档知识 (${dreamKnowledge.length}条)</div>`;
+        for (const item of dreamKnowledge) {
+          let text = item.summary || item.content.substring(0, 300);
+          innerHTML += `<div class="knowledge-item"><div class="knowledge-similarity">相似度：${(item.similarity * 100).toFixed(1)}%</div>
+            <div class="knowledge-text">${text.substring(0, 300)}${text.length > 300 ? '...' : ''}</div>
+            <div class="knowledge-source">🧠 ${escapeHtml(item.source_label || '归档知识')}</div></div>`;
+        }
+      }
+      innerHTML += '</div>';
+      knowledgeDiv.innerHTML = innerHTML;
+      bubble.appendChild(knowledgeDiv);
+    }
+  } else {
+    bubble.textContent = content;
+  }
+  div.appendChild(bubble);
+  const pinBtn = document.createElement('div');
+  pinBtn.className = 'pin-btn pinned';
+  pinBtn.textContent = '📌 已固定';
+  pinBtn.onclick = function () { pinMessage(role, content, pinBtn); };
+  div.appendChild(pinBtn);
+  const timeDiv = document.createElement('div');
+  timeDiv.className = 'message-time';
+  timeDiv.textContent = new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' });
+  if (role === 'user') {
+    const retryBtn = document.createElement('span');
+    retryBtn.className = 'retry-btn';
+    retryBtn.title = '重新回答';
+    retryBtn.textContent = '↻';
+    retryBtn.onclick = function () {
+      retryBtn.classList.add('spinning');
+      const reasonMode = document.querySelector('.skill-toggle[data-skill="reason_mode"].active') !== null;
+      socket.emit('ask_question', { session_id: sessionId, question: content, use_reason: reasonMode });
+      setTimeout(() => retryBtn.classList.remove('spinning'), 1000);
+    };
+    timeDiv.appendChild(retryBtn);
+  }
+  div.appendChild(timeDiv);
+  container.appendChild(div);
+  container.scrollTop = container.scrollHeight;
+  fetch('/api/pin_message', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ session_id: sessionId, role, content }) })
+    .then(r => r.json()).then(data => { if (data.success) updatePinnedContextUI(data.pinned); }).catch(() => {});
+}
+
+function clearChat() {
+  if (confirm('确定清空对话？')) {
+    fetch('/api/clear_history', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ session_id: sessionId }) })
+      .then(() => {
+        document.getElementById('chatContainer').innerHTML = '<div class="chat-message assistant"><div class="message-bubble">您好！我是您的 CPA 考试辅导助手。请问有什么问题需要帮助？</div></div>';
+        document.getElementById('pinnedContextSection').innerHTML = '<div class="pinned-empty">消息默认已固定，点击 📌 可取消</div>';
+      });
+  }
+}
+
+function pinMessage(role, content, btn) {
+  const pinned = btn.classList.contains('pinned');
+  const path = pinned ? '/api/unpin_message_by_content' : '/api/pin_message';
+  fetch(path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ session_id: sessionId, role, content }) })
+    .then(r => r.json()).then(data => {
+      if (data.success) {
+        btn.classList.toggle('pinned');
+        btn.textContent = pinned ? '📌 取消固定' : '📌 已固定';
+        updatePinnedContextUI(data.pinned);
+      }
+    });
+}
+function unpinMessage(index) {
+  fetch('/api/unpin_message', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ session_id: sessionId, index }) })
+    .then(r => r.json()).then(data => { if (data.success) { updatePinnedContextUI(data.pinned); syncPinButtons(data.pinned); } });
+}
+function syncPinButtons(pinned) {
+  document.querySelectorAll('.pin-btn').forEach(btn => {
+    const msgDiv = btn.closest('.chat-message');
+    if (!msgDiv) return;
+    const bubble = msgDiv.querySelector('.message-bubble');
+    if (!bubble) return;
+    const content = bubble.textContent || bubble.innerText;
+    const role = msgDiv.classList.contains('user') ? 'user' : 'assistant';
+    const isPinned = pinned.some(p => p.role === role && p.content === content);
+    btn.classList.toggle('pinned', isPinned);
+    btn.textContent = isPinned ? '📌 已固定' : '📌 取消固定';
+  });
+}
+function updatePinnedContextUI(pinned) {
+  const section = document.getElementById('pinnedContextSection');
+  if (!section) return;
+  if (!pinned || pinned.length === 0) { section.innerHTML = '<div class="pinned-empty">点击消息上的 📌 按钮固定为上下文</div>'; return; }
+  section.innerHTML = pinned.map((msg, i) => {
+    const label = msg.role === 'user' ? '你' : 'AI';
+    const preview = msg.content.length > 60 ? msg.content.substring(0, 60) + '...' : msg.content;
+    return `<div class="pinned-context-item"><span class="role-tag ${msg.role === 'user' ? 'user' : ''}">${label}</span>
+      <span class="context-text" title="${msg.content.replace(/"/g, '&quot;')}">${preview}</span>
+      <button class="unpin-btn" onclick="unpinMessage(${i})" title="取消固定">×</button></div>`;
+  }).join('');
+}
+
+function toggleSection(id) {
+  const body = document.getElementById('body-' + id);
+  const arrow = document.getElementById('arrow-' + id);
+  if (body) body.classList.toggle('closed');
+  if (arrow) arrow.classList.toggle('closed');
+}
+
+let promptsData = null, skillsData = null;
+async function loadPromptsAndSkills() {
+  try {
+    const res = await fetch('/api/prompts/get');
+    const data = await res.json();
+    if (data.success) { promptsData = data.prompts || {}; skillsData = data.skills || []; renderPrompts(); renderSkills(); }
+  } catch (e) { console.error('加载提示词配置失败:', e); }
+}
+function renderPrompts() {
+  const container = document.getElementById('promptList');
+  if (!container || !promptsData) return;
+  const keys = Object.keys(promptsData);
+  container.innerHTML = keys.map((key, idx) => {
+    const p = promptsData[key];
+    return `<div class="prompt-item ${idx === 0 ? 'active' : ''}" data-key="${key}">
+      <div class="prompt-name">${escapeHtml(p.name || key)}</div>
+      <div class="prompt-desc">${escapeHtml(p.desc || '')}</div></div>`;
+  }).join('');
+  container.querySelectorAll('.prompt-item').forEach(item => {
+    item.addEventListener('click', function () {
+      document.querySelectorAll('.prompt-item').forEach(el => el.classList.remove('active'));
+      this.classList.add('active');
+      fetch('/api/set_prompt', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ session_id: sessionId, prompt_key: this.dataset.key }) });
+    });
+  });
+}
+function renderSkills() {
+  const container = document.getElementById('skillList');
+  if (!container || !skillsData) return;
+  const defaultActive = ['knowledge_search', 'qa_history_search'];
+  container.innerHTML = skillsData.map(s => {
+    const active = defaultActive.includes(s.id) ? 'active' : '';
+    return `<div class="skill-item"><div><div class="skill-name">${escapeHtml(s.name || s.id)}</div>
+      <div class="skill-desc">${escapeHtml(s.description || '')}</div></div>
+      <div class="skill-toggle ${active}" data-skill="${s.id}"></div></div>`;
+  }).join('');
+  container.querySelectorAll('.skill-toggle').forEach(toggle => {
+    toggle.addEventListener('click', function () {
+      this.classList.toggle('active');
+      fetch('/api/toggle_skill', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ session_id: sessionId, skill_id: this.dataset.skill }) });
+    });
+  });
+}
+
+document.addEventListener('DOMContentLoaded', function () {
+  loadPromptsAndSkills();
+  document.getElementById('questionInput').addEventListener('keydown', function (e) {
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); }
+  });
+  document.getElementById('fileInput').addEventListener('change', function (e) {
+    const file = e.target.files[0];
+    if (file) {
+      const formData = new FormData();
+      formData.append('file', file); formData.append('session_id', sessionId);
+      fetch('/upload/file', { method: 'POST', body: formData });
+      document.getElementById('fileList').textContent = '已上传：' + file.name;
+      e.target.value = '';
+    }
+  });
+  document.getElementById('imageInput').addEventListener('change', function (e) {
+    const file = e.target.files[0];
+    if (file) {
+      const formData = new FormData();
+      formData.append('image', file); formData.append('session_id', sessionId);
+      fetch('/upload/image', { method: 'POST', body: formData });
+      document.getElementById('imageList').textContent = '已上传：' + file.name;
+      e.target.value = '';
+    }
+  });
+  function restoreSession() {
+    fetch('/api/get_session', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ session_id: sessionId }) })
+      .then(r => r.json()).then(data => {
+        const container = document.getElementById('chatContainer');
+        if (data.history && data.history.length > 0) {
+          container.innerHTML = '';
+          data.history.forEach(msg => addMessage(msg.role, msg.content));
+          container.scrollTop = container.scrollHeight;
+        }
+        updatePinnedContextUI(data.pinned_context || []);
+      }).catch(err => console.error('恢复session失败:', err));
+  }
+  restoreSession();
+  setTimeout(loadDreamStats, 500);
+});
+
+/* ===== SocketIO 流式输出 ===== */
+let currentAssistantMessage = null;
+let currentThinkingDiv = null;
+
+socket.on('typing', function (data) {
+  const container = document.getElementById('chatContainer');
+  if (data.status) {
+    const typingDiv = document.createElement('div');
+    typingDiv.className = 'chat-message assistant';
+    typingDiv.id = 'typingIndicator';
+    typingDiv.innerHTML = '<div class="typing-indicator"><div class="typing-dots"><div class="typing-dot"></div><div class="typing-dot"></div><div class="typing-dot"></div></div> 正在思考…</div>';
+    container.appendChild(typingDiv);
+  } else {
+    const typing = container.querySelector('#typingIndicator');
+    if (typing) typing.remove();
+  }
+  container.scrollTop = container.scrollHeight;
+});
+
+socket.on('stream_answer', function (data) {
+  const container = document.getElementById('chatContainer');
+  if (!currentAssistantMessage) {
+    currentAssistantMessage = document.createElement('div');
+    currentAssistantMessage.className = 'chat-message assistant';
+    const bubble = document.createElement('div');
+    bubble.className = 'message-bubble';
+    bubble.id = 'streaming-bubble';
+    currentAssistantMessage.appendChild(bubble);
+    if (data.thinking) {
+      currentThinkingDiv = document.createElement('div');
+      currentThinkingDiv.className = 'thinking-container';
+      currentThinkingDiv.innerHTML = '<div class="thinking-header">🧠 思考过程</div><div class="thinking-content"></div>';
+      currentAssistantMessage.appendChild(currentThinkingDiv);
+    }
+    const timeDiv = document.createElement('div');
+    timeDiv.className = 'message-time';
+    timeDiv.textContent = new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' });
+    currentAssistantMessage.appendChild(timeDiv);
+    container.appendChild(currentAssistantMessage);
+  }
+  const bubble = document.getElementById('streaming-bubble');
+  if (bubble) bubble.textContent += data.content;
+  if (data.thinking && currentThinkingDiv) {
+    const tc = currentThinkingDiv.querySelector('.thinking-content');
+    if (tc) tc.textContent += data.thinking;
+  }
+  container.scrollTop = container.scrollHeight;
+});
+
+socket.on('answer_finished', function (data) {
+  const container = document.getElementById('chatContainer');
+  const bubble = document.getElementById('streaming-bubble');
+  if (bubble) {
+    bubble.innerHTML = marked.parse(bubble.textContent);
+    bubble.removeAttribute('id');
+  }
+  const hasKB = data.knowledge_base && data.knowledge_base.length > 0;
+  const hasQA = data.qa_history && data.qa_history.length > 0;
+  const hasDream = data.dream_knowledge && data.dream_knowledge.length > 0;
+  const totalResults = data.knowledge_results ? data.knowledge_results.length : 0;
+  if ((hasKB || hasQA || hasDream) && currentAssistantMessage) {
+    const knowledgeDiv = document.createElement('div');
+    knowledgeDiv.className = 'knowledge-sources';
+    const messageId = 'msg_' + Date.now();
+    const modeLabels = { vector: '向量', bm25: '全文', hybrid: '混合', graph: '图谱' };
+    const modeLabel = modeLabels[data.search_mode] || '向量';
+    let innerHTML = `<div class="knowledge-header" onclick="toggleKnowledge('${messageId}')">
+      <span class="knowledge-title">📚 知识库检索结果 (${totalResults}条) [<span style="font-weight:400;font-size:11px">${modeLabel}</span>]</span>
+      <span class="knowledge-toggle" id="knowledge-toggle-${messageId}">▶</span></div>
+      <div class="knowledge-content hide" id="knowledge-content-${messageId}">`;
+    const renderGroup = (title, list) => {
+      let h = `<div class="knowledge-category-header">${title} (${list.length}条)</div>`;
+      for (const item of list) {
+        let text = item.summary || item.content.substring(0, 300);
+        h += `<div class="knowledge-item"><div class="knowledge-similarity">相似度：${(item.similarity * 100).toFixed(1)}%</div>
+          <div class="knowledge-text">${text.substring(0, 300)}${text.length > 300 ? '...' : ''}</div>
+          <div class="knowledge-source">📚 ${escapeHtml(item.source_label || '教材')}</div></div>`;
+      }
+      return h;
+    };
+    if (hasKB) innerHTML += renderGroup('📖 教材知识库', data.knowledge_base);
+    if (hasQA) innerHTML += renderGroup('📋 历史问答', data.qa_history);
+    if (hasDream) innerHTML += renderGroup('🧠 归档知识', data.dream_knowledge);
+    innerHTML += '</div>';
+    knowledgeDiv.innerHTML = innerHTML;
+    currentAssistantMessage.appendChild(knowledgeDiv);
+  }
+  currentAssistantMessage = null;
+  currentThinkingDiv = null;
+  const lastMsg = container.querySelector('.chat-message.assistant:last-child');
+  if (lastMsg && !lastMsg.querySelector('.pin-btn')) {
+    const pinBtn = document.createElement('div');
+    pinBtn.className = 'pin-btn pinned';
+    pinBtn.textContent = '📌 已固定';
+    const content = bubble ? bubble.textContent : '';
+    pinBtn.onclick = function () { pinMessage('assistant', content, pinBtn); };
+    const timeDiv = lastMsg.querySelector('.message-time');
+    if (timeDiv) lastMsg.insertBefore(pinBtn, timeDiv); else lastMsg.appendChild(pinBtn);
+    fetch('/api/pin_message', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ session_id: sessionId, role: 'assistant', content }) })
+      .then(r => r.json()).then(d => { if (d.success) updatePinnedContextUI(d.pinned); }).catch(() => {});
+  }
+  container.scrollTop = container.scrollHeight;
+});
+
+socket.on('answer', function (data) {
+  addMessage('assistant', data.answer, data.knowledge_results || [], data.knowledge_base || [], data.qa_history || [], data.dream_knowledge || []);
+});
+
+function toggleKnowledge(id) {
+  const content = document.getElementById('knowledge-content-' + id);
+  const toggle = document.getElementById('knowledge-toggle-' + id);
+  if (content && toggle) { content.classList.toggle('hide'); toggle.textContent = content.classList.contains('hide') ? '▶' : '▼'; }
+}
+
+/* ===== AI 做梦 ===== */
+function startDream() {
+  const btn = document.getElementById('dreamBtn'), progress = document.getElementById('dreamProgress'), stats = document.getElementById('dreamStats');
+  fetch('/api/dream/status').then(r => r.json()).then(status => {
+    if (status.is_running) {
+      btn.disabled = false; btn.textContent = '🧠 开始做梦'; progress.style.display = 'block';
+      progress.textContent = '⏳ 上次做梦还在进行中，请稍候...'; return;
+    }
+    if (!status.total_knowledge || status.total_knowledge < 2) {
+      btn.disabled = false; btn.textContent = '🧠 开始做梦'; progress.style.display = 'block';
+      progress.textContent = '💤 暂无足够归档知识（需至少2条），先进行问答自动提炼吧';
+      setTimeout(() => { progress.style.display = 'none'; }, 3000); return;
+    }
+    btn.disabled = true; btn.textContent = '⏳ 正在做梦...'; progress.style.display = 'block'; progress.textContent = '正在启动...';
+    fetch('/api/dream/start', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({}) })
+      .then(r => r.json()).then(data => { if (data.success) pollDreamStatus(); else { btn.disabled = false; btn.textContent = '🧠 开始做梦'; progress.textContent = '❌ ' + (data.error || '启动失败'); } })
+      .catch(err => { btn.disabled = false; btn.textContent = '🧠 开始做梦'; progress.textContent = '❌ 请求失败: ' + err; });
+  }).catch(() => {
+    btn.disabled = true; btn.textContent = '⏳ 正在做梦...'; progress.style.display = 'block'; progress.textContent = '正在启动...';
+    fetch('/api/dream/start', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({}) })
+      .then(r => r.json()).then(data => { if (data.success) pollDreamStatus(); else { btn.disabled = false; btn.textContent = '🧠 开始做梦'; progress.textContent = '❌ ' + (data.error || '启动失败'); } })
+      .catch(err => { btn.disabled = false; btn.textContent = '🧠 开始做梦'; progress.textContent = '❌ 请求失败: ' + err; });
+  });
+}
+function pollDreamStatus() {
+  const btn = document.getElementById('dreamBtn'), progress = document.getElementById('dreamProgress'), stats = document.getElementById('dreamStats');
+  let retries = 0; const maxRetries = 60;
+  function poll() {
+    fetch('/api/dream/status').then(r => r.json()).then(data => {
+      retries++;
+      if (data.is_running) { progress.textContent = '⏳ 正在梳理知识... (' + retries + 's)'; setTimeout(poll, 1000); }
+      else {
+        btn.disabled = false; btn.textContent = '🧠 开始做梦'; progress.style.display = 'none';
+        stats.innerHTML = '📊 归档知识: <b>' + (data.total_knowledge || 0) + '</b> 条 | 可信度高: <b>' + (data.high_confidence || 0) + '</b> 条<br>🔄 自动提炼: ' + (data.auto_count || 0) + ' 次 | 手动做梦: ' + (data.manual_count || 0) + ' 次' + (data.last_dream_time ? '<br>⏰ 上次做梦: ' + data.last_dream_time : '');
+      }
+    }).catch(err => { retries++; if (retries < maxRetries) setTimeout(poll, 2000); else { btn.disabled = false; btn.textContent = '🧠 开始做梦'; progress.textContent = '❌ 超时'; } });
+  }
+  poll();
+}
+function loadDreamStats() {
+  fetch('/api/dream/status').then(r => r.json()).then(data => {
+    const stats = document.getElementById('dreamStats');
+    if (!stats) return;
+    if (data.total_knowledge > 0) stats.innerHTML = '📊 归档知识: <b>' + data.total_knowledge + '</b> 条 | 可信度高: <b>' + (data.high_confidence || 0) + '</b> 条' + (data.last_dream_time ? '<br>⏰ 上次做梦: ' + data.last_dream_time : '');
+    else stats.innerHTML = '💤 暂无归档知识，每次问答后会自动提炼';
+  }).catch(() => {});
+}
+
+/* ===== 教材选择 ===== */
+let allBooks = [];
+function loadBooks() {
+  fetch('/api/books/list').then(r => r.json()).then(data => {
+    if (!data.success) return;
+    allBooks = data.books;
+    renderBooks(allBooks);
+  }).catch(() => {});
+}
+function renderBooks(books) {
+  const container = document.getElementById('bookSelector');
+  if (!books || books.length === 0) { container.innerHTML = '<div class="book-selector-status">暂无教材数据</div>'; return; }
+  const groups = {};
+  for (const b of books) { const t = b.type || '其他'; if (!groups[t]) groups[t] = []; groups[t].push(b); }
+  let html = '';
+  const typeOrder = ['官方教材', '轻一'];
+  for (const type of typeOrder) {
+    if (groups[type]) {
+      html += '<div class="book-group-label">' + type + '</div>';
+      for (const b of groups[type]) html += `<div class="book-item" onclick="toggleBook(this, ${b.id})"><input type="checkbox" class="book-cb" data-id="${b.id}" checked><span class="book-name">${escapeHtml(b.name)}</span></div>`;
+      delete groups[type];
+    }
+  }
+  for (const type in groups) {
+    html += '<div class="book-group-label">' + type + '</div>';
+    for (const b of groups[type]) html += `<div class="book-item" onclick="toggleBook(this, ${b.id})"><input type="checkbox" class="book-cb" data-id="${b.id}" checked><span class="book-name">${escapeHtml(b.name)}</span></div>`;
+  }
+  container.innerHTML = html;
+  updateBookStatus();
+}
+function toggleBook(el, bookId) {
+  const cb = el.querySelector('.book-cb');
+  cb.checked = !cb.checked;
+  updateBookStatus();
+}
+function toggleAllBooks(event) {
+  if (event.target.tagName === 'INPUT') return;
+  const cb = document.getElementById('selectAllBooks');
+  cb.checked = !cb.checked;
+  toggleAllBooksFromCheckbox();
+}
+function toggleAllBooksFromCheckbox() {
+  const checked = document.getElementById('selectAllBooks').checked;
+  document.querySelectorAll('.book-cb').forEach(cb => cb.checked = checked);
+  updateBookStatus();
+}
+function updateBookStatus() {
+  const total = document.querySelectorAll('.book-cb').length;
+  const checked = document.querySelectorAll('.book-cb:checked').length;
+  document.getElementById('bookSelectStatus').textContent = checked + '/' + total + ' 本';
+  document.getElementById('selectAllBooks').checked = (checked === total);
+}
+function getSelectedBooks() {
+  const names = [];
+  document.querySelectorAll('.book-cb:checked').forEach(cb => {
+    const id = parseInt(cb.dataset.id, 10);
+    const book = allBooks.find(b => b.id === id);
+    if (book) names.push(book.name);
+  });
+  return names;
+}
+
+/* ===== 检索模式 ===== */
+function selectMode(mode, el) {
+  document.querySelectorAll('.mode-item').forEach(item => item.classList.remove('active'));
+  el.classList.add('active');
+  el.querySelector('input[type="radio"]').checked = true;
+}
+function getSelectedSearchMode() {
+  const active = document.querySelector('.mode-item.active');
+  return active ? active.dataset.mode : 'vector';
+}
+
+/* ===== 知识图谱构建 ===== */
+function buildGraph() {
+  const btn = document.querySelector('button[onclick="buildGraph()"]');
+  const status = document.getElementById('graphStatus');
+  btn.disabled = true; btn.textContent = '⏳ 构建中...'; status.style.display = 'block'; status.textContent = '正在提取实体和关系，请耐心等待...';
+  let offset = 0; const limit = 200; let totalEntities = 0, totalRelations = 0;
+  function processBatch() {
+    fetch('/api/graph/build', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ limit, offset }) })
+      .then(r => r.json()).then(data => {
+        if (data.success) {
+          totalEntities += data.entity_count || 0; totalRelations += data.relation_count || 0; offset += data.processed || 0;
+          status.textContent = `已处理 ${offset} 条，新增 ${totalEntities} 实体，${totalRelations} 关系`;
+          if (data.processed === limit) processBatch();
+          else { btn.disabled = false; btn.textContent = '🧠 构建知识图谱'; status.textContent = `✅ 构建完成！共 ${totalEntities} 实体，${totalRelations} 关系`; }
+        } else { btn.disabled = false; btn.textContent = '🧠 构建知识图谱'; status.textContent = '❌ 构建失败: ' + (data.error || '未知错误'); }
+      }).catch(err => { btn.disabled = false; btn.textContent = '🧠 构建知识图谱'; status.textContent = '❌ 请求失败: ' + err.message; });
+  }
+  processBatch();
+}
+function checkGraphStatus() {
+  const status = document.getElementById('graphStatus');
+  status.style.display = 'block'; status.textContent = '查询中...';
+  fetch('/api/graph/stats').then(r => r.json()).then(data => {
+    if (data.success) {
+      let cats = '';
+      if (data.category_stats) { cats = ' | '; for (const [k, v] of Object.entries(data.category_stats)) cats += k + ':' + v + ' '; }
+      status.textContent = `📊 实体: ${data.entity_count} | 关系: ${data.relation_count}${cats}`;
+    } else status.textContent = '❌ 查询失败';
+  }).catch(() => { status.textContent = '❌ 请求失败'; });
+}
+
+loadBooks();
+</script>
+{% endblock %}
+

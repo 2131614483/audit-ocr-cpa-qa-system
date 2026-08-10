@@ -1,0 +1,423 @@
+{% extends "base.html" %}
+{% set active = 'settings' %}
+{% block title %}系统配置 · 审计CPA综合系统{% endblock %}
+{% block page_title %}⚙️ 系统配置{% endblock %}
+{% block head %}
+<style>
+  .current-provider-card{background:linear-gradient(135deg,#eef2ff,#f0f4ff);border:1px solid #c7d2fe;border-radius:var(--radius);padding:18px 22px;margin-bottom:18px}
+  .provider-tabs{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:18px}
+  .provider-tab{padding:8px 14px;border-radius:999px;background:var(--surface);border:1px solid var(--border);cursor:pointer;font-size:13px;color:var(--text-2);transition:all .15s}
+  .provider-tab:hover{border-color:var(--primary);color:var(--primary)}
+  .provider-tab.active{background:var(--primary);color:#fff;border-color:var(--primary);font-weight:600}
+  .provider-tab .dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:6px;background:#ddd}
+  .provider-tab.active .dot{background:#fff}
+  .test-result{margin-top:8px;padding:8px 12px;border-radius:6px;font-size:13px;display:none}
+  .test-result.success{display:block;background:#f0fdf4;color:#16a34a;border:1px solid #bbf7d0}
+  .test-result.error{display:block;background:#fef2f2;color:#dc2626;border:1px solid #fecaca}
+  .prompt-editor,.skill-editor{background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:14px 16px;margin-bottom:10px}
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="tabs">
+  <button class="tab-btn active" onclick="switchConfigTab('api', this)">🤖 API 配置</button>
+  <button class="tab-btn" onclick="switchConfigTab('system', this)">🖥️ 系统配置</button>
+  <button class="tab-btn" onclick="switchConfigTab('prompts', this)">💬 提示词配置</button>
+</div>
+
+<div id="config-api" class="tab-pane active">
+  <div class="current-provider-card">
+    <div class="flex gap-16 items-center" style="flex-wrap:wrap">
+      <b style="white-space:nowrap">🔄 当前使用的供应商</b>
+      <select class="form-select" id="currentProviderSelect" style="flex:1;min-width:200px" onchange="onProviderChange()"></select>
+      <button class="btn btn-primary" onclick="setAsCurrent()">设为当前</button>
+    </div>
+    <div class="text-3 mt-8" style="font-size:13px">切换后对话和知识库检索将使用所选供应商的模型</div>
+  </div>
+  <div class="provider-tabs" id="providerTabs"></div>
+  <div id="panels"></div>
+  <div class="mt-16">
+    <button class="btn btn-primary" onclick="saveAll()">💾 保存全部配置</button>
+  </div>
+</div>
+
+<div id="config-system" class="tab-pane">
+  <div class="card mb-16">
+    <div class="card-header">🗄️ 数据库配置</div>
+    <div class="card-body">
+      <div class="form-row">
+        <div class="form-group"><label>主机地址</label><input class="form-control" type="text" id="sys-db_host" placeholder="localhost"></div>
+        <div class="form-group"><label>端口</label><input class="form-control" type="number" id="sys-db_port" placeholder="5432"></div>
+      </div>
+      <div class="form-row">
+        <div class="form-group"><label>数据库名</label><input class="form-control" type="text" id="sys-db_name" placeholder="audit_ocr"></div>
+        <div class="form-group"><label>用户名</label><input class="form-control" type="text" id="sys-db_user" placeholder="postgres"></div>
+      </div>
+      <div class="form-row">
+        <div class="form-group"><label>密码</label><input class="form-control" type="password" id="sys-db_password" placeholder="admin"></div>
+        <div class="form-group"><label class="checkbox-row"><input type="checkbox" id="sys-db_enabled"> 启用数据库</label></div>
+      </div>
+    </div>
+  </div>
+  <div class="card mb-16">
+    <div class="card-header">🤖 模型默认配置</div>
+    <div class="card-body">
+      <div class="form-row">
+        <div class="form-group"><label>模型供应商</label>
+          <select class="form-select" id="sys-model_provider">
+            <option value="ollama">Ollama</option><option value="deepseek">DeepSeek</option>
+            <option value="openai">OpenAI</option><option value="qwen">通义千问</option>
+            <option value="zhipu">智谱AI</option><option value="doubao">火山引擎豆包</option>
+          </select></div>
+        <div class="form-group"><label>Ollama API 地址</label><input class="form-control" type="text" id="sys-ollama_api_url" placeholder="http://localhost:11434/api/chat"></div>
+      </div>
+      <div class="form-row">
+        <div class="form-group"><label>主模型</label><input class="form-control" type="text" id="sys-main_model" placeholder="qwen3.5:latest"></div>
+        <div class="form-group"><label>修复模型</label><input class="form-control" type="text" id="sys-fix_model" placeholder="deepseek-r1:8b"></div>
+      </div>
+      <div class="form-row">
+        <div class="form-group"><label>嵌入模型</label><input class="form-control" type="text" id="sys-embed_model" placeholder="qwen3-embedding:8b"></div>
+        <div class="form-group"><label>超时时间(秒)</label><input class="form-control" type="number" id="sys-timeout" placeholder="300"></div>
+      </div>
+    </div>
+  </div>
+  <div class="card mb-16">
+    <div class="card-header">📂 文件路径</div>
+    <div class="card-body">
+      <div class="form-group"><label>图片输入目录</label><input class="form-control" type="text" id="sys-image_folder" placeholder="./input_pic"></div>
+      <div class="form-row">
+        <div class="form-group"><label>Excel输出路径</label><input class="form-control" type="text" id="sys-excel_output" placeholder="./output/audit_ocr_result.xlsx"></div>
+        <div class="form-group"><label>输出根目录</label><input class="form-control" type="text" id="sys-output_root_folder" placeholder="./output/分类结果"></div>
+      </div>
+      <div class="form-row">
+        <div class="form-group"><label>知识库路径</label><input class="form-control" type="text" id="sys-knowledge_base_path" placeholder="./knowledge/audit_knowledge_base.json"></div>
+        <div class="form-group"><label>支持格式(逗号分隔)</label><input class="form-control" type="text" id="sys-supported_formats" placeholder=".png,.jpg,.jpeg"></div>
+      </div>
+    </div>
+  </div>
+  <button class="btn btn-primary" onclick="saveSystemConfig()">💾 保存系统配置</button>
+</div>
+
+<div id="config-prompts" class="tab-pane">
+  <div class="card mb-16">
+    <div class="card-header">💬 角色提示词管理</div>
+    <div class="card-body">
+      <p class="text-3 mb-16" style="font-size:13px">编辑各角色的系统提示词，修改后保存即可生效。</p>
+      <div id="promptEditorList"></div>
+      <div class="flex justify-between mt-16">
+        <button class="btn btn-outline" onclick="addPromptRole()">＋ 添加角色</button>
+        <button class="btn btn-primary" onclick="savePromptsConfig()">💾 保存提示词</button>
+      </div>
+    </div>
+  </div>
+  <div class="card">
+    <div class="card-header">⚡ Skills 管理</div>
+    <div class="card-body">
+      <p class="text-3 mb-16" style="font-size:13px">编辑各技能的显示名称和描述。</p>
+      <div id="skillsEditorList"></div>
+      <div class="flex justify-between mt-16">
+        <button class="btn btn-outline" onclick="addSkill()">＋ 添加技能</button>
+        <button class="btn btn-primary" onclick="savePromptsConfig()">💾 保存 Skills</button>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+let configData = null;
+const providerLabels = {
+  "ollama": "🖥️ Ollama", "deepseek": "🔷 DeepSeek", "qwen": "🔶 通义千问",
+  "openai": "🟢 OpenAI", "doubao": "🔴 豆包", "zhipu": "🟣 智谱"
+};
+
+async function loadConfig() {
+  const res = await fetch('/api/config/get');
+  const data = await res.json();
+  if (data.success) {
+    configData = data.config;
+    renderTabs();
+    renderPanels();
+    const keys = Object.keys(configData.providers);
+    if (keys.length > 0) showTab(keys[0]);
+  }
+}
+
+function renderTabs() {
+  const container = document.getElementById('providerTabs');
+  const providers = configData.providers;
+  const current = configData.current_provider;
+  container.innerHTML = Object.keys(providers).map(key => {
+    const label = providerLabels[key] || key;
+    const isActive = key === current;
+    return `<button class="provider-tab ${isActive ? 'active' : ''}" onclick="showTab('${key}')">
+      <span class="dot"></span>${label}${isActive ? ' · 当前' : ''}</button>`;
+  }).join('');
+  const sel = document.getElementById('currentProviderSelect');
+  sel.innerHTML = Object.keys(providers).map(key => {
+    const label = providerLabels[key] || key;
+    return `<option value="${key}" ${key === current ? 'selected' : ''}>${label}</option>`;
+  }).join('');
+}
+
+function onProviderChange() {}
+function setAsCurrent() {
+  const sel = document.getElementById('currentProviderSelect');
+  configData.current_provider = sel.value;
+  renderTabs();
+  showTab(sel.value);
+  saveAll();
+}
+
+function renderPanels() {
+  const container = document.getElementById('panels');
+  container.innerHTML = Object.keys(configData.providers).map(key => {
+    const p = configData.providers[key];
+    return `<div class="tab-pane" id="panel-${key}">
+      <div class="card mb-16"><div class="card-header">🔑 API 密钥</div><div class="card-body">
+        <div class="form-group"><label>API Key</label>
+          <input type="password" class="form-control" id="${key}-api_key" value="${p.api_key || ''}" placeholder="输入API密钥"></div>
+      </div></div>
+      <div class="card mb-16"><div class="card-header">🌐 API 地址</div><div class="card-body">
+        <div class="form-group"><label>对话 API</label><input type="text" class="form-control" id="${key}-chat_api" value="${p.chat_api || ''}" placeholder="https://api.deepseek.com/v1/chat/completions"></div>
+        <div class="form-group"><label>向量嵌入 API</label><input type="text" class="form-control" id="${key}-embed_api" value="${p.embed_api || ''}" placeholder="https://api.deepseek.com/v1/embeddings"></div>
+      </div></div>
+      <div class="card mb-16"><div class="card-header">🤖 模型选择</div><div class="card-body">
+        <div class="form-row">
+          <div class="form-group"><label>主模型</label><input type="text" class="form-control" id="${key}-model-main" value="${(p.models && p.models.main) || ''}" placeholder="deepseek-chat"></div>
+          <div class="form-group"><label>修复模型</label><input type="text" class="form-control" id="${key}-model-fix" value="${(p.models && p.models.fix) || ''}" placeholder="deepseek-chat"></div>
+          <div class="form-group"><label>嵌入模型</label><input type="text" class="form-control" id="${key}-model-embed" value="${(p.models && p.models.embed) || ''}" placeholder="deepseek-embedding"></div>
+        </div>
+        <div class="form-row">
+          <div class="form-group"><label>向量维度</label><input type="number" class="form-control" id="${key}-embed_dimension" value="${p.embed_dimension || 1024}" placeholder="1024"></div>
+          <div class="form-group"><label>供应商名称</label><input type="text" class="form-control" id="${key}-name" value="${p.name || key}" placeholder="供应商名称"></div>
+        </div>
+        <label class="checkbox-row"><input type="checkbox" id="${key}-vision" ${p.vision_support ? 'checked' : ''}> 支持图片</label>
+      </div></div>
+      <div class="card mb-16"><div class="card-header">🧪 测试连接</div><div class="card-body">
+        <button class="btn btn-outline" onclick="testConnection('${key}')">测试连接</button>
+        <div class="test-result" id="test-${key}"></div>
+      </div></div>
+    </div>`;
+  }).join('');
+}
+
+function showTab(key) {
+  document.querySelectorAll('.provider-tab').forEach(t => t.classList.remove('active'));
+  document.querySelectorAll('#panels .tab-pane').forEach(p => p.classList.remove('active'));
+  const tab = document.querySelector(`.provider-tab[onclick="showTab('${key}')"]`);
+  if (tab) tab.classList.add('active');
+  const panel = document.getElementById('panel-' + key);
+  if (panel) panel.classList.add('active');
+}
+
+function collectConfig() {
+  const providers = {};
+  for (const key of Object.keys(configData.providers)) {
+    providers[key] = {
+      name: document.getElementById(`${key}-name`).value,
+      chat_api: document.getElementById(`${key}-chat_api`).value,
+      embed_api: document.getElementById(`${key}-embed_api`).value,
+      api_key: document.getElementById(`${key}-api_key`).value,
+      models: {
+        main: document.getElementById(`${key}-model-main`).value,
+        fix: document.getElementById(`${key}-model-fix`).value,
+        embed: document.getElementById(`${key}-model-embed`).value
+      },
+      embed_dimension: parseInt(document.getElementById(`${key}-embed_dimension`).value, 10) || 1024,
+      vision_support: document.getElementById(`${key}-vision`).checked
+    };
+  }
+  return { current_provider: configData.current_provider, providers };
+}
+
+async function saveAll() {
+  try {
+    const res = await api('/api/config/save', { method: 'POST', body: { config: collectConfig() }, toastError: false });
+    if (res.success) {
+      showToast('✅ 配置已保存', 'success');
+      configData = collectConfig();
+      renderTabs();
+    } else showToast('❌ 保存失败: ' + (res.error || '未知错误'), 'error');
+  } catch (e) { showToast('❌ ' + e.message, 'error'); }
+}
+
+async function testConnection(key) {
+  const el = document.getElementById('test-' + key);
+  el.className = 'test-result';
+  el.textContent = '⏳ 正在测试...';
+  el.style.display = 'block';
+  const apiKey = document.getElementById(`${key}-api_key`).value;
+  const apiUrl = document.getElementById(`${key}-chat_api`).value;
+  const model = document.getElementById(`${key}-model-main`).value;
+  if (!apiKey || apiKey.includes('在此填入')) {
+    el.className = 'test-result error';
+    el.textContent = '❌ 请先填入有效的 API Key';
+    return;
+  }
+  try {
+    const res = await fetch(apiUrl || 'https://api.deepseek.com/v1/chat/completions', {
+      method: 'POST',
+      headers: { 'Authorization': 'Bearer ' + apiKey, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model: model || 'deepseek-chat', messages: [{ role: 'user', content: 'hi' }], max_tokens: 5 })
+    });
+    if (res.ok) { el.className = 'test-result success'; el.textContent = '✅ 连接成功！API Key 有效'; }
+    else { const err = await res.text(); el.className = 'test-result error'; el.textContent = `❌ 连接失败 (${res.status}): ${err.slice(0, 100)}`; }
+  } catch (e) { el.className = 'test-result error'; el.textContent = '❌ 请求失败: ' + e.message; }
+}
+
+function switchConfigTab(tab, btn) {
+  document.querySelectorAll('.tabs .tab-btn').forEach(t => t.classList.remove('active'));
+  document.querySelectorAll('#config-api,#config-system,#config-prompts').forEach(s => s.classList.remove('active'));
+  btn.classList.add('active');
+  document.getElementById('config-' + tab).classList.add('active');
+  if (tab === 'system') loadSystemConfig();
+  if (tab === 'prompts') loadPromptsConfig();
+}
+
+/* ===== 系统配置 ===== */
+async function loadSystemConfig() {
+  try {
+    const res = await fetch('/api/system_config/get');
+    const data = await res.json();
+    if (data.success && data.config) {
+      const c = data.config;
+      setVal('sys-db_host', c.DB_HOST); setVal('sys-db_port', c.DB_PORT);
+      setVal('sys-db_name', c.DB_NAME); setVal('sys-db_user', c.DB_USER);
+      setVal('sys-db_password', c.DB_PASSWORD); setChecked('sys-db_enabled', c.DB_ENABLED);
+      setVal('sys-model_provider', c.MODEL_PROVIDER); setVal('sys-ollama_api_url', c.OLLAMA_API_URL);
+      setVal('sys-main_model', c.MAIN_MODEL); setVal('sys-fix_model', c.FIX_MODEL);
+      setVal('sys-embed_model', c.EMBED_MODEL); setVal('sys-timeout', c.TIMEOUT);
+      setVal('sys-image_folder', c.IMAGE_FOLDER); setVal('sys-excel_output', c.EXCEL_OUTPUT);
+      setVal('sys-output_root_folder', c.OUTPUT_ROOT_FOLDER); setVal('sys-knowledge_base_path', c.KNOWLEDGE_BASE_PATH);
+      setVal('sys-supported_formats', (c.SUPPORTED_FORMATS || []).join(','));
+    }
+  } catch (e) { showToast('加载系统配置失败: ' + e.message, 'error'); }
+}
+function setVal(id, val) { const el = document.getElementById(id); if (el) el.value = val !== undefined && val !== null ? val : ''; }
+function setChecked(id, val) { const el = document.getElementById(id); if (el) el.checked = !!val; }
+function getVal(id, def) { const el = document.getElementById(id); return el ? el.value : def; }
+
+async function saveSystemConfig() {
+  const config = {
+    DB_HOST: getVal('sys-db_host', 'localhost'),
+    DB_PORT: parseInt(getVal('sys-db_port', '5432'), 10) || 5432,
+    DB_NAME: getVal('sys-db_name', 'audit_ocr'),
+    DB_USER: getVal('sys-db_user', 'postgres'),
+    DB_PASSWORD: getVal('sys-db_password', 'admin'),
+    DB_ENABLED: document.getElementById('sys-db_enabled').checked,
+    MODEL_PROVIDER: getVal('sys-model_provider', 'ollama'),
+    OLLAMA_API_URL: getVal('sys-ollama_api_url', 'http://localhost:11434/api/chat'),
+    MAIN_MODEL: getVal('sys-main_model', 'qwen3.5:latest'),
+    FIX_MODEL: getVal('sys-fix_model', 'deepseek-r1:8b'),
+    EMBED_MODEL: getVal('sys-embed_model', 'qwen3-embedding:8b'),
+    TIMEOUT: parseInt(getVal('sys-timeout', '300'), 10) || 300,
+    IMAGE_FOLDER: getVal('sys-image_folder', './input_pic'),
+    EXCEL_OUTPUT: getVal('sys-excel_output', './output/audit_ocr_result.xlsx'),
+    OUTPUT_ROOT_FOLDER: getVal('sys-output_root_folder', './output/分类结果'),
+    KNOWLEDGE_BASE_PATH: getVal('sys-knowledge_base_path', './knowledge/audit_knowledge_base.json'),
+    SUPPORTED_FORMATS: getVal('sys-supported_formats', '.png,.jpg,.jpeg').split(',').map(s => s.trim()).filter(Boolean)
+  };
+  try {
+    const data = await api('/api/system_config/save', { method: 'POST', body: { config }, toastError: false });
+    if (data.success) showToast('✅ 系统配置已保存', 'success');
+    else showToast('❌ ' + (data.error || '保存失败'), 'error');
+  } catch (e) { showToast('❌ ' + e.message, 'error'); }
+}
+
+/* ===== 提示词 & Skills ===== */
+let promptsData = { prompts: {}, skills: [] };
+async function loadPromptsConfig() {
+  try {
+    const res = await fetch('/api/prompts/get');
+    const data = await res.json();
+    if (data.success) {
+      promptsData.prompts = data.prompts || {};
+      promptsData.skills = data.skills || [];
+      renderPromptEditors();
+      renderSkillsEditors();
+    }
+  } catch (e) { showToast('加载提示词配置失败: ' + e.message, 'error'); }
+}
+function renderPromptEditors() {
+  document.getElementById('promptEditorList').innerHTML = Object.keys(promptsData.prompts).map(key => {
+    const p = promptsData.prompts[key];
+    return `<div class="prompt-editor">
+      <div class="flex gap-8 mb-8">
+        <input type="text" class="form-control prompt-key" value="${key}" placeholder="角色标识(如 accounting)">
+        <button class="btn btn-danger btn-sm" onclick="this.closest('.prompt-editor').remove()">删除</button>
+      </div>
+      <div class="form-row">
+        <div class="form-group"><label style="font-size:12px">显示名称</label><input type="text" class="form-control prompt-name" value="${p.name || ''}" placeholder="会计"></div>
+        <div class="form-group"><label style="font-size:12px">简短描述</label><input type="text" class="form-control prompt-desc" value="${p.desc || ''}" placeholder="会计准则与财务报表"></div>
+      </div>
+      <div class="form-group"><label style="font-size:12px">系统提示词</label>
+        <textarea class="form-control prompt-text" rows="3">${(p.prompt || '').replace(/</g, '&lt;').replace(/>/g, '&gt;')}</textarea></div>
+    </div>`;
+  }).join('');
+}
+function renderSkillsEditors() {
+  document.getElementById('skillsEditorList').innerHTML = promptsData.skills.map(s => {
+    return `<div class="skill-editor flex gap-8 items-center">
+      <input type="text" class="form-control skill-id" value="${s.id || ''}" placeholder="knowledge_search" style="flex:1">
+      <input type="text" class="form-control skill-name" value="${s.name || ''}" placeholder="知识库检索" style="flex:1">
+      <input type="text" class="form-control skill-desc" value="${s.description || ''}" placeholder="从CPA教材知识库中检索" style="flex:2">
+      <button class="btn btn-danger btn-sm" onclick="this.closest('.skill-editor').remove()">×</button>
+    </div>`;
+  }).join('');
+}
+function addPromptRole() {
+  const n = Date.now();
+  document.getElementById('promptEditorList').insertAdjacentHTML('beforeend', `<div class="prompt-editor" style="border:1px solid var(--primary)">
+    <div class="flex gap-8 mb-8">
+      <input type="text" class="form-control prompt-key" value="new_role_${n}" placeholder="角色标识(如 accounting)">
+      <button class="btn btn-danger btn-sm" onclick="this.closest('.prompt-editor').remove()">删除</button>
+    </div>
+    <div class="form-row">
+      <div class="form-group"><label style="font-size:12px">显示名称</label><input type="text" class="form-control prompt-name" value="新角色" placeholder="会计"></div>
+      <div class="form-group"><label style="font-size:12px">简短描述</label><input type="text" class="form-control prompt-desc" value="新角色描述" placeholder="会计准则与财务报表"></div>
+    </div>
+    <div class="form-group"><label style="font-size:12px">系统提示词</label>
+      <textarea class="form-control prompt-text" rows="3" placeholder="输入系统提示词"></textarea></div>
+  </div>`);
+}
+function addSkill() {
+  const n = Date.now();
+  document.getElementById('skillsEditorList').insertAdjacentHTML('beforeend', `<div class="skill-editor flex gap-8 items-center" style="border:1px solid var(--primary)">
+    <input type="text" class="form-control skill-id" value="new_skill_${n}" placeholder="knowledge_search" style="flex:1">
+    <input type="text" class="form-control skill-name" value="新技能" placeholder="知识库检索" style="flex:1">
+    <input type="text" class="form-control skill-desc" value="新技能描述" placeholder="从CPA教材知识库中检索" style="flex:2">
+    <button class="btn btn-danger btn-sm" onclick="this.closest('.skill-editor').remove()">×</button>
+  </div>`);
+}
+async function savePromptsConfig() {
+  const prompts = {};
+  document.querySelectorAll('#promptEditorList .prompt-editor').forEach(el => {
+    const key = el.querySelector('.prompt-key').value.trim();
+    if (!key) return;
+    prompts[key] = {
+      name: el.querySelector('.prompt-name').value.trim(),
+      desc: el.querySelector('.prompt-desc').value.trim(),
+      prompt: el.querySelector('.prompt-text').value.trim()
+    };
+  });
+  const skills = [];
+  document.querySelectorAll('#skillsEditorList .skill-editor').forEach(el => {
+    const id = el.querySelector('.skill-id').value.trim();
+    if (!id) return;
+    skills.push({ id, name: el.querySelector('.skill-name').value.trim(), description: el.querySelector('.skill-desc').value.trim() });
+  });
+  try {
+    const data = await api('/api/prompts/save', { method: 'POST', body: { prompts, skills }, toastError: false });
+    if (data.success) {
+      showToast('✅ 提示词配置已保存', 'success');
+      promptsData.prompts = prompts;
+      promptsData.skills = skills;
+    } else showToast('❌ ' + (data.error || '保存失败'), 'error');
+  } catch (e) { showToast('❌ ' + e.message, 'error'); }
+}
+
+loadConfig();
+</script>
+{% endblock %}

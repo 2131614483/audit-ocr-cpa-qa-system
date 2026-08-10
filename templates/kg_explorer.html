@@ -1,0 +1,304 @@
+{% extends "base.html" %}
+{% set active = 'kg' %}
+{% block title %}知识图谱浏览器 · 审计CPA综合系统{% endblock %}
+{% block page_title %}🕸️ CPA知识图谱浏览器{% endblock %}
+{% block content_class %}kg-page{% endblock %}
+
+{% block head %}
+<script src="https://cdn.jsdelivr.net/npm/echarts@5.5.0/dist/echarts.min.js"></script>
+<style>
+  .page-content.kg-page{max-width:none;padding:0;height:calc(100vh - var(--topbar-h));display:flex;flex-direction:column}
+  .kg-layout{display:flex;flex:1;min-height:0}
+  #sidebar{width:300px;min-width:300px;background:var(--surface);border-right:1px solid var(--border);display:flex;flex-direction:column;overflow-y:auto}
+  #sidebar h2{padding:14px 16px;font-size:16px;background:var(--bg);border-bottom:1px solid var(--border);margin:0}
+  #search-box{padding:12px}
+  #search-box input{width:100%;padding:8px 12px;background:var(--surface);border:1px solid var(--border-strong);border-radius:var(--radius-sm);color:var(--text);font-size:14px}
+  #search-box input:focus{outline:none;border-color:var(--primary)}
+  #entity-list{flex:1;overflow-y:auto}
+  .entity-item{padding:10px 12px;border-bottom:1px solid var(--border);cursor:pointer;transition:background .15s}
+  .entity-item:hover{background:var(--bg)}
+  .entity-item.active{background:var(--primary-soft);border-left:3px solid var(--primary)}
+  .entity-item .name{font-weight:600;font-size:14px}
+  .entity-item .meta{font-size:12px;color:var(--text-3);margin-top:3px}
+  .entity-item .tag{display:inline-block;padding:1px 6px;border-radius:3px;font-size:11px;margin-right:4px;color:#fff}
+  .tag-concept{background:#3b82f6}.tag-standard{background:#d97706}.tag-formula{background:#16a34a}
+  .tag-taxitem{background:#db2777}.tag-question{background:#7c3aed}.tag-chapter{background:#64748b}.tag-section{background:#94a3b8}
+  #main{flex:1;position:relative;background:var(--bg)}
+  #chart{width:100%;height:100%}
+  #detail{width:360px;min-width:360px;background:var(--surface);border-left:1px solid var(--border);overflow-y:auto;padding:16px;display:none}
+  #detail.active{display:block}
+  #detail h3{font-size:18px;margin-bottom:12px;color:var(--primary);margin:0}
+  #detail .field{margin-bottom:10px}
+  #detail .field label{font-size:12px;color:var(--text-3);display:block}
+  #detail .field .value{font-size:14px;margin-top:2px;color:var(--text)}
+  .relation-item{padding:8px;margin:4px 0;background:var(--bg);border-radius:4px;font-size:13px;border-left:2px solid var(--primary)}
+  .relation-item .rtype{font-size:11px;color:var(--text-3)}
+  .chunk-preview{margin-top:12px;padding:10px;background:var(--bg);border-radius:4px;font-size:13px;max-height:200px;overflow-y:auto}
+  #legend{position:absolute;bottom:16px;left:16px;background:rgba(255,255,255,.92);padding:10px 14px;border-radius:6px;font-size:12px;box-shadow:var(--shadow);border:1px solid var(--border)}
+  #legend .item{display:inline-block;margin-right:12px}
+  #legend .dot{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:4px;vertical-align:middle}
+  #toolbar{position:absolute;top:12px;right:12px;display:flex;gap:8px}
+  #toolbar button{padding:6px 14px;background:var(--surface);border:1px solid var(--border-strong);border-radius:var(--radius-sm);color:var(--text-2);cursor:pointer;font-size:13px}
+  #toolbar button:hover{background:var(--primary-soft);border-color:var(--primary);color:var(--primary)}
+  #loading{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);font-size:16px;color:var(--text-3)}
+  .type-filter-btn{display:inline-block;padding:2px 8px;border-radius:999px;font-size:11px;color:#fff;border:none;cursor:pointer;margin:2px}
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="kg-layout">
+  <aside id="sidebar">
+    <h2>🧠 CPA知识图谱</h2>
+    <div id="search-box"><input type="text" id="search-input" placeholder="搜索实体…（回车搜索）" onkeyup="if(event.key==='Enter') searchEntities()"></div>
+    <div style="padding:8px 12px;font-size:12px;color:var(--text-3)" id="stats-bar">加载中…</div>
+    <div style="padding:4px 12px;display:flex;gap:4px;flex-wrap:wrap" id="type-filters"></div>
+    <div id="entity-list"></div>
+  </aside>
+  <div id="main">
+    <div id="chart"></div>
+    <div id="loading">加载图谱数据中…</div>
+    <div id="toolbar">
+      <button onclick="resetView()">🔄 重置视图</button>
+      <button onclick="location.href='/'">↩ 返回问答</button>
+    </div>
+    <div id="legend">
+      <span class="item"><span class="dot" style="background:#3b82f6"></span>概念</span>
+      <span class="item"><span class="dot" style="background:#d97706"></span>准则</span>
+      <span class="item"><span class="dot" style="background:#16a34a"></span>公式</span>
+      <span class="item"><span class="dot" style="background:#db2777"></span>税目</span>
+      <span class="item"><span class="dot" style="background:#7c3aed"></span>考题</span>
+    </div>
+  </div>
+  <div id="detail">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+      <h3 id="detail-title">实体详情</h3>
+      <button onclick="closeDetail()" style="background:none;border:none;color:var(--text-3);cursor:pointer;font-size:18px">&times;</button>
+    </div>
+    <div id="detail-content"></div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const TYPE_COLORS = {
+  'Concept': '#3b82f6', 'Standard': '#d97706', 'Formula': '#16a34a',
+  'TaxItem': '#db2777', 'Question': '#7c3aed', 'Chapter': '#64748b', 'Section': '#94a3b8'
+};
+let chart, currentEntityId = null;
+let graphData = { nodes: [], links: [] };
+
+async function init() {
+  getChart();
+  try {
+    const r = await fetch('/api/kg/stats');
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    const s = await r.json();
+    if (s.success) {
+      document.getElementById('stats-bar').textContent = `实体: ${s.entity_count} | 关系: ${s.relation_count} | 易混: ${s.confusion_pair_count || 0}`;
+      if (s.entity_type_distribution) {
+        document.getElementById('type-filters').innerHTML = Object.entries(s.entity_type_distribution)
+          .map(([t, c]) => `<button class="type-filter-btn" style="background:${TYPE_COLORS[t] || '#64748b'}" onclick="loadEntities('${t}')">${t}(${c})</button>`).join('');
+      }
+    }
+  } catch (e) {
+    console.error('加载统计失败:', e);
+    document.getElementById('stats-bar').textContent = '统计数据加载失败';
+  }
+  await loadEntities();
+  await buildMainGraph();
+}
+
+async function loadEntities(type = '') {
+  const url = `/api/kg/entities?page_size=100${type ? '&type=' + type : ''}`;
+  const list = document.getElementById('entity-list');
+  try {
+    const r = await fetch(url);
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    const data = await r.json();
+    if (!data.success || !data.entities) { list.innerHTML = '<div style="padding:12px;color:var(--text-3)">暂无数据</div>'; return; }
+    list.innerHTML = data.entities.map(e => {
+      const type = (e.entity_type || 'Concept').toLowerCase();
+      return `<div class="entity-item" onclick="handleEntityClick(${e.id})" data-id="${e.id}">
+        <div class="name"><span class="tag tag-${type}">${e.entity_type || 'Unknown'}</span> ${escapeHtml(e.name || '')}</div>
+        <div class="meta">${escapeHtml(e.category || '')} | ${e.chunk_count || 0} 个来源</div></div>`;
+    }).join('');
+  } catch (e) { list.innerHTML = '<div style="padding:12px;color:var(--danger)">加载失败: ' + e.message + '</div>'; }
+}
+
+function handleEntityClick(id) {
+  try {
+    const item = document.querySelector(`.entity-item[data-id="${id}"]`);
+    const name = item ? item.querySelector('.name').textContent.replace(/^\s*\S+\s*/, '') : '未知';
+    showEntityDetail(id, name);
+  } catch (e) { console.error('点击实体失败:', e); }
+}
+
+async function searchEntities() {
+  const q = document.getElementById('search-input').value.trim();
+  if (!q) { await loadEntities(); return; }
+  const list = document.getElementById('entity-list');
+  try {
+    const r = await fetch('/api/kg/entities/search', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ query: q }) });
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    const data = await r.json();
+    if (!data.success || !data.entities) { list.innerHTML = '<div style="padding:12px;color:var(--text-3)">未找到匹配结果</div>'; return; }
+    list.innerHTML = data.entities.map(e => {
+      const type = (e.entity_type || 'Concept').toLowerCase();
+      const score = e.score !== null && e.score !== undefined ? e.score : 0;
+      return `<div class="entity-item" onclick="handleEntityClick(${e.id})" data-id="${e.id}">
+        <div class="name"><span class="tag tag-${type}">${e.entity_type || 'Unknown'}</span> ${escapeHtml(e.name || '')}</div>
+        <div class="meta">${escapeHtml(e.category || '')} | 匹配度: ${(score * 100).toFixed(0)}%</div></div>`;
+    }).join('');
+  } catch (e) { list.innerHTML = '<div style="padding:12px;color:var(--danger)">搜索失败: ' + e.message + '</div>'; }
+}
+
+async function buildMainGraph(entityId = null) {
+  const loading = document.getElementById('loading');
+  loading.style.display = 'block';
+  loading.textContent = '加载图谱数据中…';
+  try {
+    if (entityId) {
+      const r = await fetch('/api/kg/expand', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ entity_id: entityId, depth: 2 }) });
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      const data = await r.json();
+      if (!data.success || !data.entity) throw new Error('实体数据不存在');
+      const nodes = [{ id: data.entity.id, name: data.entity.name || '', category: data.entity.entity_type || 'Concept', symbolSize: 20, itemStyle: { borderWidth: 2 } }];
+      const links = [];
+      const outgoing = (data.neighbors && data.neighbors.outgoing) || [];
+      for (const n of outgoing) {
+        if (n.entity) {
+          nodes.push({ id: n.entity.id, name: n.entity.name || '', category: n.entity.entity_type || 'Concept', symbolSize: 12 });
+          links.push({ source: data.entity.id, target: n.entity.id, label: { show: true, formatter: n.relation_type || '', fontSize: 10 } });
+        }
+      }
+      const incoming = (data.neighbors && data.neighbors.incoming) || [];
+      for (const n of incoming) {
+        if (n.entity && !nodes.find(x => x.id === n.entity.id)) nodes.push({ id: n.entity.id, name: n.entity.name || '', category: n.entity.entity_type || 'Concept', symbolSize: 12 });
+        if (n.entity) links.push({ source: n.entity.id, target: data.entity.id, label: { show: true, formatter: n.relation_type || '', fontSize: 10 } });
+      }
+      renderGraph(nodes, links);
+    } else {
+      const r1 = await fetch('/api/kg/entities?page_size=200');
+      if (!r1.ok) throw new Error('HTTP ' + r1.status);
+      const edata = await r1.json();
+      if (!edata.success || !edata.entities || edata.entities.length === 0) { loading.textContent = '暂无图数据，请先构建知识图谱'; return; }
+      graphData.nodes = edata.entities.map(e => ({ id: e.id, name: e.name || '', category: e.entity_type || 'Concept', symbolSize: Math.min(30, 8 + (e.chunk_count || 0)) }));
+      const r2 = await fetch('/api/kg/relations?limit=200');
+      if (!r2.ok) throw new Error('HTTP ' + r2.status);
+      const relData = await r2.json();
+      graphData.links = (relData.success && relData.relations) ? relData.relations.map(r => ({ source: r.source_entity_id, target: r.target_entity_id, label: { show: true, formatter: r.relation_type || '', fontSize: 10 } })) : [];
+      renderGraph(graphData.nodes, graphData.links);
+    }
+  } catch (e) {
+    console.error('构建图谱失败:', e);
+    loading.textContent = '加载失败: ' + (e.message || '未知错误');
+    if (graphData.nodes && graphData.nodes.length > 0) setTimeout(() => { renderGraph(graphData.nodes, graphData.links); loading.style.display = 'none'; }, 1000);
+  } finally {
+    setTimeout(() => { loading.style.display = 'none'; }, 500);
+  }
+}
+
+function getChart() {
+  if (!chart || typeof chart.dispose === 'function') {
+    const chartDom = document.getElementById('chart');
+    if (!chartDom) { console.error('图表容器不存在'); return null; }
+    try {
+      if (chart) chart.dispose();
+      chart = echarts.init(chartDom);
+      chart.on('click', (params) => { if (params.dataType === 'node') showEntityDetail(params.data.id, params.data.name); });
+      window.addEventListener('resize', () => { if (chart) chart.resize(); });
+    } catch (e) { console.error('初始化图表失败:', e); return null; }
+  }
+  return chart;
+}
+
+function renderGraph(nodes, links) {
+  const chart = getChart();
+  if (!chart) { console.error('无法渲染图表，实例为空'); return; }
+  const option = {
+    backgroundColor: '#f8fafc',
+    tooltip: { formatter: (p) => { if (!p || !p.data) return ''; return p.dataType === 'node' ? '<b>' + p.data.name + '</b><br/>类型: ' + p.data.category : (p.data.label?.formatter || ''); } },
+    series: [{
+      type: 'graph', layout: 'force', roam: true, draggable: true,
+      force: { repulsion: 300, edgeLength: [150, 300], gravity: 0.1 },
+      data: nodes.map(n => ({ id: n.id, name: n.name, category: n.category, symbolSize: n.symbolSize, itemStyle: { color: TYPE_COLORS[n.category] || '#94a3b8' } })),
+      links: links.map(l => ({ source: l.source, target: l.target, label: l.label, lineStyle: { color: '#cbd5e1', curveness: 0.1, width: 1 } })),
+      categories: Object.entries(TYPE_COLORS).map(([name, color]) => ({ name, itemStyle: { color } })),
+      label: { show: true, fontSize: 12, color: '#334155', formatter: (p) => { if (!p || !p.data || !p.data.name) return ''; return p.data.name.length > 8 ? p.data.name.slice(0, 7) + '...' : p.data.name; } },
+      emphasis: { focus: 'adjacency', label: { fontSize: 14 }, itemStyle: { borderColor: '#2563eb', borderWidth: 2 } },
+      lineStyle: { color: '#cbd5e1', curveness: 0.2 }
+    }]
+  };
+  chart.setOption(option, true);
+}
+
+async function showEntityDetail(id, name) {
+  currentEntityId = id;
+  const detail = document.getElementById('detail');
+  detail.classList.add('active');
+  document.getElementById('detail-title').textContent = name || '实体详情';
+  document.querySelectorAll('.entity-item').forEach(el => el.classList.remove('active'));
+  const item = document.querySelector(`.entity-item[data-id="${id}"]`);
+  if (item) item.classList.add('active');
+  const detailContent = document.getElementById('detail-content');
+  try {
+    const r = await fetch('/api/kg/entities/' + id);
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    const data = await r.json();
+    if (!data.success || !data.entity) { detailContent.innerHTML = '<p style="color:var(--warning)">实体不存在或已被删除</p>'; return; }
+    const e = data.entity;
+    const type = (e.entity_type || 'Concept').toLowerCase();
+    let html = `
+      <div class="field"><label>类型</label><div class="value"><span class="tag tag-${type}">${escapeHtml(e.entity_type || 'Unknown')}</span></div></div>
+      <div class="field"><label>分类</label><div class="value">${escapeHtml(e.category || '-')}</div></div>
+      <div class="field"><label>定义</label><div class="value">${escapeHtml(e.definition || '-')}</div></div>
+      <div class="field"><label>章节</label><div class="value">${escapeHtml(e.chapter_ref || '-')}</div></div>
+      <div class="field"><label>重要性</label><div class="value">${escapeHtml(e.importance || '-')}</div></div>`;
+    const relations = data.relations || [];
+    if (relations.length > 0) {
+      html += '<h4 style="margin-top:16px;font-size:14px">关联关系</h4>';
+      html += relations.map(r => {
+        const confidence = r.confidence !== null && r.confidence !== undefined ? r.confidence : 0;
+        const targetName = r.target && r.target.name ? escapeHtml(r.target.name) : '未知';
+        const sourceName = r.source && r.source.name ? escapeHtml(r.source.name) : '未知';
+        return `<div class="relation-item">
+          <span class="rtype">${escapeHtml(r.relation_type || '')} (${r.direction === 'outgoing' ? '出' : '入'}) ${(confidence * 100).toFixed(0)}%</span><br/>
+          ${r.direction === 'outgoing' ? escapeHtml(e.name || '') + ' → ' + targetName : sourceName + ' → ' + escapeHtml(e.name || '')}
+          <br/><small>${escapeHtml(r.description || '')}</small>
+          ${r.formula ? '<br/><code>' + escapeHtml(r.formula) + '</code>' : ''}
+        </div>`;
+      }).join('');
+    }
+    const confusionPairs = data.confusion_pairs || [];
+    if (confusionPairs.length > 0) {
+      html += '<h4 style="margin-top:16px;color:var(--warning);font-size:14px">易混概念</h4>';
+      html += confusionPairs.map(c => {
+        const conceptA = c.concept_a || {};
+        const conceptB = c.concept_b || {};
+        return `<div class="relation-item" style="border-left-color:var(--warning)">
+          <b>${escapeHtml(conceptA.name || '')} ⇔ ${escapeHtml(conceptB.name || '')}</b><br/>
+          <small>${escapeHtml(c.distinction || '')}</small>
+          ${c.typical_question ? '<br/><small style="color:var(--text-3)">考题: ' + escapeHtml(c.typical_question) + '</small>' : ''}
+        </div>`;
+      }).join('');
+    }
+    html += '<div style="margin-top:16px"><a href="/kg/search?q=' + encodeURIComponent(name || '') + '" target="_blank">🔍 在图谱中搜索此概念</a></div>';
+    detailContent.innerHTML = html;
+    await buildMainGraph(id);
+  } catch (e) {
+    console.error('加载实体详情失败:', e);
+    detailContent.innerHTML = '<p style="color:var(--danger)">加载失败: ' + escapeHtml(e.message || '未知错误') + '</p>';
+  }
+}
+
+function closeDetail() {
+  document.getElementById('detail').classList.remove('active');
+  currentEntityId = null;
+  document.querySelectorAll('.entity-item').forEach(el => el.classList.remove('active'));
+}
+function resetView() { currentEntityId = null; closeDetail(); buildMainGraph(); }
+
+init();
+</script>
+{% endblock %}

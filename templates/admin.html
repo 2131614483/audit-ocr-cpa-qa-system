@@ -1,0 +1,357 @@
+{% extends "base.html" %}
+{% set active = 'admin' %}
+{% block title %}管理后台 · 审计CPA综合系统{% endblock %}
+{% block page_title %}🗂️ 知识库管理后台{% endblock %}
+
+{% block content %}
+<div class="tabs">
+  <button class="tab-btn active" onclick="switchTab('stats')">📊 概览</button>
+  <button class="tab-btn" onclick="switchTab('textbook')">📚 教材知识库</button>
+  <button class="tab-btn" onclick="switchTab('qa')">📋 历史问答</button>
+  <button class="tab-btn" onclick="switchTab('audit')">🔍 审计辅导</button>
+  <button class="tab-btn" onclick="switchTab('dream')">🧠 归档知识</button>
+</div>
+
+<!-- 概览 -->
+<div class="tab-pane active" id="panel-stats">
+  <div class="stat-grid" id="statsGrid">
+    <div class="stat-card"><span class="stat-label">📚 教材知识库</span><span class="stat-value" data-stat="1">-</span></div>
+    <div class="stat-card"><span class="stat-label">📋 历史问答</span><span class="stat-value" data-stat="2">-</span></div>
+    <div class="stat-card"><span class="stat-label">🔍 审计辅导</span><span class="stat-value" data-stat="3">-</span></div>
+    <div class="stat-card"><span class="stat-label">🧠 归档知识</span><span class="stat-value" data-stat="4">-</span></div>
+  </div>
+  <div class="card"><div class="card-header">📊 知识库类型分布</div><div class="card-body" id="typeDistribution"></div></div>
+</div>
+
+<!-- 教材知识库 -->
+<div class="tab-pane" id="panel-textbook">
+  <div class="toolbar">
+    <div class="flex gap-8" style="flex:1;max-width:420px">
+      <input class="form-control" id="kbSearch" placeholder="搜索内容…（回车搜索）" onkeydown="if(event.key=='Enter')loadKB(1)">
+      <button class="btn btn-primary" onclick="loadKB(1)">搜索</button>
+    </div>
+    <div class="flex gap-8 items-center">
+      <span class="text-2" id="kbSelectedCount">已选 0 条</span>
+      <button class="btn btn-danger" id="kbDeleteBtn" onclick="deleteKB()" disabled>删除选中</button>
+    </div>
+  </div>
+  <div class="card">
+    <div class="table-wrap">
+      <table class="tbl">
+        <thead><tr>
+          <th style="width:40px"><input type="checkbox" class="checkbox" id="kbSelectAll" onchange="toggleSelectAll('kb')"></th>
+          <th style="width:60px">ID</th><th style="width:110px">来源</th><th>内容预览</th>
+          <th style="width:70px">长度</th><th style="width:90px">来源ID</th><th style="width:70px">操作</th>
+        </tr></thead>
+        <tbody id="kbTableBody"><tr><td colspan="7" class="tbl-empty">加载中…</td></tr></tbody>
+      </table>
+    </div>
+    <div class="card-body" id="kbPagination" style="padding:12px 16px"></div>
+  </div>
+</div>
+
+<!-- 历史问答 -->
+<div class="tab-pane" id="panel-qa">
+  <div class="toolbar">
+    <div class="flex gap-8" style="flex:1;max-width:420px">
+      <input class="form-control" id="qaSearch" placeholder="搜索问题或回答…（回车搜索）" onkeydown="if(event.key=='Enter')loadQA(1)">
+      <button class="btn btn-primary" onclick="loadQA(1)">搜索</button>
+    </div>
+    <div class="flex gap-8 items-center">
+      <span class="text-2" id="qaSelectedCount">已选 0 条</span>
+      <button class="btn btn-danger" id="qaDeleteBtn" onclick="deleteQA()" disabled>删除选中</button>
+    </div>
+  </div>
+  <div class="card">
+    <div class="table-wrap">
+      <table class="tbl">
+        <thead><tr>
+          <th style="width:40px"><input type="checkbox" class="checkbox" id="qaSelectAll" onchange="toggleSelectAll('qa')"></th>
+          <th style="width:60px">ID</th><th style="width:90px">会话</th><th>问题</th><th>回答</th>
+          <th style="width:150px">时间</th><th style="width:70px">操作</th>
+        </tr></thead>
+        <tbody id="qaTableBody"><tr><td colspan="7" class="tbl-empty">加载中…</td></tr></tbody>
+      </table>
+    </div>
+    <div class="card-body" id="qaPagination" style="padding:12px 16px"></div>
+  </div>
+</div>
+
+<!-- 审计辅导 -->
+<div class="tab-pane" id="panel-audit">
+  <div class="toolbar">
+    <div class="flex gap-8" style="flex:1;max-width:420px">
+      <input class="form-control" id="auditSearch" placeholder="搜索问题…（回车搜索）" onkeydown="if(event.key=='Enter')loadAudit(1)">
+      <button class="btn btn-primary" onclick="loadAudit(1)">搜索</button>
+    </div>
+    <div class="flex gap-8 items-center">
+      <span class="text-2" id="auditSelectedCount">已选 0 条</span>
+      <button class="btn btn-danger" id="auditDeleteBtn" onclick="deleteAudit()" disabled>删除选中</button>
+    </div>
+  </div>
+  <div class="card">
+    <div class="table-wrap">
+      <table class="tbl">
+        <thead><tr>
+          <th style="width:40px"><input type="checkbox" class="checkbox" id="auditSelectAll" onchange="toggleSelectAll('audit')"></th>
+          <th style="width:60px">ID</th><th style="width:100px">凭证ID</th><th>问题/摘要</th><th style="width:70px">操作</th>
+        </tr></thead>
+        <tbody id="auditTableBody"><tr><td colspan="5" class="tbl-empty">加载中…</td></tr></tbody>
+      </table>
+    </div>
+    <div class="card-body" id="auditPagination" style="padding:12px 16px"></div>
+  </div>
+</div>
+
+<!-- 归档知识 -->
+<div class="tab-pane" id="panel-dream">
+  <div class="toolbar">
+    <div class="flex gap-8" style="flex:1;max-width:520px">
+      <input class="form-control" id="dreamSearch" placeholder="搜索知识点…（回车搜索）" onkeydown="if(event.key=='Enter')loadDream(1)">
+      <select class="form-select" id="dreamCategory" style="width:140px" onchange="loadDream(1)"><option value="">全部分类</option></select>
+      <button class="btn btn-primary" onclick="loadDream(1)">搜索</button>
+    </div>
+    <div class="flex gap-8 items-center">
+      <span class="text-2" id="dreamSelectedCount">已选 0 条</span>
+      <button class="btn btn-danger" id="dreamDeleteBtn" onclick="deleteDream()" disabled>删除选中</button>
+    </div>
+  </div>
+  <div class="card">
+    <div class="table-wrap">
+      <table class="tbl">
+        <thead><tr>
+          <th style="width:40px"><input type="checkbox" class="checkbox" id="dreamSelectAll" onchange="toggleSelectAll('dream')"></th>
+          <th style="width:60px">ID</th><th style="width:130px">知识点主题</th><th>内容预览</th>
+          <th style="width:80px">分类</th><th style="width:80px">可信度</th><th style="width:70px">批次</th>
+          <th style="width:100px">创建时间</th><th style="width:70px">操作</th>
+        </tr></thead>
+        <tbody id="dreamTableBody"><tr><td colspan="9" class="tbl-empty">加载中…</td></tr></tbody>
+      </table>
+    </div>
+    <div class="card-body" id="dreamPagination" style="padding:12px 16px"></div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+let kbPage = 1, qaPage = 1, dreamPage = 1, auditPage = 1;
+let kbSelected = [], qaSelected = [], dreamSelected = [], auditSelected = [];
+let kbData = [], qaData = [], dreamData = [], auditData = [];
+const SEL = { kb: 'kbSelected', qa: 'qaSelected', dream: 'dreamSelected', audit: 'auditSelected' };
+
+function switchTab(name) {
+  document.querySelectorAll('.tab-btn').forEach(t => t.classList.remove('active'));
+  document.querySelectorAll('.tab-pane').forEach(p => p.classList.remove('active'));
+  document.querySelector(`.tab-btn[onclick*="'${name}'"]`).classList.add('active');
+  document.getElementById('panel-' + name).classList.add('active');
+  if (name === 'stats') loadStats();
+  else if (name === 'textbook') loadKB(kbPage);
+  else if (name === 'qa') loadQA(qaPage);
+  else if (name === 'audit') loadAudit(auditPage);
+  else if (name === 'dream') loadDream(dreamPage);
+}
+
+function loadStats() {
+  fetch('/api/cpa_knowledge/stats').then(r => r.json()).then(data => {
+    const ts = data.type_stats || {};
+    document.querySelector('[data-stat="1"]').textContent = (ts['chapter_chunk'] || 0).toLocaleString();
+    document.querySelector('[data-stat="2"]').textContent = (ts['qa_history'] || 0).toLocaleString();
+    document.querySelector('[data-stat="3"]').textContent = (ts['audit_tutor'] || 0).toLocaleString();
+    document.querySelector('[data-stat="4"]').textContent = (data.entity_count || 0).toLocaleString();
+    const labels = { chapter_chunk: '教材', qa_history: '历史问答', audit_tutor: '审计辅导' };
+    document.getElementById('typeDistribution').innerHTML = '<table class="tbl"><thead><tr><th>类型</th><th>数量</th></tr></thead><tbody>' +
+      Object.entries(ts).map(([t, c]) => `<tr><td>${labels[t] || t}</td><td>${(c || 0).toLocaleString()}</td></tr>`).join('') +
+      '</tbody></table>';
+  }).catch(() => {
+    document.querySelectorAll('[data-stat]').forEach(el => el.textContent = '0');
+  });
+}
+
+function renderListPagination(el, data, page, loadFn) {
+  renderPagination(el, { page, totalPages: data.total_pages || 1, total: data.total || 0, pageSize: 20, onPage: p => loadFn(p) });
+}
+
+function loadKB(page) {
+  kbPage = page;
+  fetch('/api/cpa_knowledge/list', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ page, page_size: 20, search: document.getElementById('kbSearch').value }) })
+    .then(r => r.json()).then(data => {
+      kbData = data.items || []; kbSelected = []; updateSelectUI('kb');
+      kbTableBody.innerHTML = kbData.length ? kbData.map(item => `<tr>
+        <td><input type="checkbox" class="checkbox" onchange="toggleKBItem(${item.id})"></td>
+        <td>${item.id}</td>
+        <td><span class="badge ${item.source_type === 'qa_history' ? 'badge-purple' : 'badge-blue'}">${item.source_type === 'chapter_chunk' ? '教材' : item.source_type === 'qa_history' ? '历史问答' : escapeHtml(item.source_type)}</span></td>
+        <td class="content-preview" title="${escapeHtml(item.content_preview)}">${escapeHtml(item.content_preview)}</td>
+        <td>${item.content_len}</td><td>${item.source_id}</td>
+        <td><button class="btn btn-outline btn-sm" onclick="viewKBDetail(${item.id})">查看</button></td></tr>`).join('')
+        : '<tr><td colspan="7" class="tbl-empty">暂无数据</td></tr>';
+      renderListPagination(document.getElementById('kbPagination'), data, page, loadKB);
+    }).catch(() => { kbTableBody.innerHTML = '<tr><td colspan="7" class="tbl-empty">加载失败</td></tr>'; });
+}
+
+function loadQA(page) {
+  qaPage = page;
+  fetch('/api/cpa_qa_history/list', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ page, page_size: 20, search: document.getElementById('qaSearch').value }) })
+    .then(r => r.json()).then(data => {
+      qaData = data.items || []; qaSelected = []; updateSelectUI('qa');
+      qaTableBody.innerHTML = qaData.length ? qaData.map(item => `<tr>
+        <td><input type="checkbox" class="checkbox" onchange="toggleQAItem(${item.id})"></td>
+        <td>${item.id}</td><td>${escapeHtml((item.session_id || '').substring(0, 12))}</td>
+        <td class="content-preview" title="${escapeHtml(item.question_preview)}">${escapeHtml(item.question_preview)}</td>
+        <td class="content-preview" title="${escapeHtml(item.answer_preview)}">${escapeHtml(item.answer_preview)}</td>
+        <td>${item.created_at}</td>
+        <td><button class="btn btn-outline btn-sm" onclick="viewQADetail(${item.id})">查看</button></td></tr>`).join('')
+        : '<tr><td colspan="7" class="tbl-empty">暂无数据</td></tr>';
+      renderListPagination(document.getElementById('qaPagination'), data, page, loadQA);
+    }).catch(() => { qaTableBody.innerHTML = '<tr><td colspan="7" class="tbl-empty">加载失败</td></tr>'; });
+}
+
+function loadAudit(page) {
+  auditPage = page;
+  fetch('/api/cpa_knowledge/audit_list', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ page, page_size: 20, search: document.getElementById('auditSearch').value }) })
+    .then(r => r.json()).then(data => {
+      auditData = data.items || [];
+      auditSelected = auditSelected.filter(id => auditData.some(item => item.id === id));
+      auditTableBody.innerHTML = auditData.length ? auditData.map(item => {
+        const summary = (item.summary || item.content || '').substring(0, 100);
+        const recordId = item.metadata && item.metadata.record_id ? item.metadata.record_id : item.source_id;
+        return `<tr>
+          <td><input type="checkbox" class="checkbox" ${auditSelected.includes(item.id) ? 'checked' : ''} onchange="toggleAuditItem(${item.id})"></td>
+          <td>${item.id}</td><td>${recordId || '-'}</td><td>${escapeHtml(summary)}</td>
+          <td><button class="btn btn-outline btn-sm" onclick="viewAuditDetail(${item.id})">查看</button></td></tr>`;
+      }).join('') : '<tr><td colspan="5" class="tbl-empty">暂无审计辅导记录</td></tr>';
+      document.getElementById('auditSelectAll').checked = auditData.length > 0 && auditSelected.length === auditData.length;
+      updateSelectUI('audit');
+      renderListPagination(document.getElementById('auditPagination'), data, page, loadAudit);
+    }).catch(() => { auditTableBody.innerHTML = '<tr><td colspan="5" class="tbl-empty">加载失败</td></tr>'; });
+}
+
+function loadDream(page) {
+  dreamPage = page;
+  fetch('/api/dream/knowledge/list', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ page, page_size: 20, search: document.getElementById('dreamSearch').value, category: document.getElementById('dreamCategory').value }) })
+    .then(r => r.json()).then(data => {
+      dreamData = data.items || []; dreamSelected = []; updateSelectUI('dream');
+      dreamTableBody.innerHTML = dreamData.length ? dreamData.map(item => `<tr>
+        <td><input type="checkbox" class="checkbox" onchange="toggleDreamItem(${item.id})"></td>
+        <td>${item.id}</td><td>${escapeHtml(item.topic || item.summary || '-')}</td>
+        <td class="content-preview" title="${escapeHtml(item.content_preview)}">${escapeHtml(item.content_preview)}</td>
+        <td>${escapeHtml(item.category) || '-'}</td>
+        <td>${item.confidence ? (item.confidence * 100).toFixed(0) + '%' : '-'}</td>
+        <td>${item.dream_batch || '-'}</td><td>${item.created_at}</td>
+        <td><button class="btn btn-outline btn-sm" onclick="viewDreamDetail(${item.id})">详情</button></td></tr>`).join('')
+        : '<tr><td colspan="9" class="tbl-empty">暂无数据</td></tr>';
+      renderListPagination(document.getElementById('dreamPagination'), data, page, loadDream);
+    }).catch(() => { dreamTableBody.innerHTML = '<tr><td colspan="9" class="tbl-empty">加载失败</td></tr>'; });
+}
+
+function toggleKBItem(id) { const i = kbSelected.indexOf(id); i === -1 ? kbSelected.push(id) : kbSelected.splice(i, 1); updateSelectUI('kb'); }
+function toggleQAItem(id) { const i = qaSelected.indexOf(id); i === -1 ? qaSelected.push(id) : qaSelected.splice(i, 1); updateSelectUI('qa'); }
+function toggleAuditItem(id) { const i = auditSelected.indexOf(id); i === -1 ? auditSelected.push(id) : auditSelected.splice(i, 1); updateSelectUI('audit'); }
+function toggleDreamItem(id) { const i = dreamSelected.indexOf(id); i === -1 ? dreamSelected.push(id) : dreamSelected.splice(i, 1); updateSelectUI('dream'); }
+
+function toggleSelectAll(type) {
+  const checked = document.getElementById(type + 'SelectAll').checked;
+  const dataMap = { kb: kbData, qa: qaData, dream: dreamData, audit: auditData };
+  const selMap = { kb: kbSelected, qa: qaSelected, dream: dreamSelected, audit: auditSelected };
+  const data = dataMap[type] || [], items = selMap[type] || [];
+  items.length = 0;
+  if (checked) data.forEach(item => items.push(item.id));
+  document.querySelectorAll(`#panel-${type === 'kb' ? 'textbook' : type} .checkbox[data-${type}-id]`).forEach(cb => cb.checked = checked);
+  updateSelectUI(type);
+}
+
+function updateSelectUI(type) {
+  const items = { kb: kbSelected, qa: qaSelected, dream: dreamSelected, audit: auditSelected }[type] || [];
+  document.getElementById(type + 'SelectedCount').textContent = `已选 ${items.length} 条`;
+  document.getElementById(type + 'DeleteBtn').disabled = items.length === 0;
+}
+
+function batchDelete(endpoint, selected, reloadFn, reloadPage) {
+  if (!selected.length) return;
+  if (!confirm(`确定删除 ${selected.length} 条记录？此操作不可撤销。`)) return;
+  const promises = selected.map(id => fetch(endpoint, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id }) }).then(r => r.json()));
+  Promise.all(promises).then(results => {
+    showToast(`成功删除 ${results.filter(r => r.success).length} 条记录`, 'success');
+    selected.length = 0;
+    reloadFn(reloadPage);
+  });
+}
+function deleteKB() { batchDelete('/api/cpa_knowledge/delete', kbSelected, loadKB, kbPage); loadStats(); }
+function deleteQA() { batchDelete('/api/cpa_qa_history/delete', qaSelected, loadQA, qaPage); loadStats(); }
+function deleteDream() { batchDelete('/api/dream/knowledge/delete', dreamSelected, loadDream, dreamPage); }
+function deleteAudit() {
+  if (!auditSelected.length) return;
+  if (!confirm(`确定删除 ${auditSelected.length} 条审计辅导记录？此操作不可撤销。`)) return;
+  fetch('/api/cpa_knowledge/audit_delete', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ids: auditSelected }) })
+    .then(r => r.json()).then(data => {
+      showToast('成功删除 ' + (data.deleted || 0) + ' 条记录', 'success');
+      auditSelected = []; loadAudit(auditPage); loadStats();
+    });
+}
+
+function openDetail(title, fields) {
+  const html = fields.map(f => `<div class="detail-item mb-8"><div class="k">${f.k}</div><div class="v">${f.v}</div></div>`).join('');
+  openModal({ title, size: 'modal-lg', body: `<div class="detail-grid">${html}</div>` });
+}
+function viewKBDetail(id) {
+  fetch('/api/cpa_knowledge/detail', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id }) })
+    .then(r => r.json()).then(data => {
+      if (data.error) { showToast(data.error, 'error'); return; }
+      const sourceLabel = data.source_type === 'chapter_chunk' ? '教材' : data.source_type === 'qa_history' ? '历史问答' : data.source_type || '-';
+      openDetail('📚 知识库详情 #' + data.id, [
+        { k: '来源类型', v: sourceLabel }, { k: '来源ID', v: data.source_id },
+        { k: '内容', v: escapeHtml(data.content) }, { k: '摘要', v: escapeHtml(data.summary || '无') },
+        { k: '元数据', v: escapeHtml(data.metadata ? JSON.stringify(data.metadata, null, 2) : '无') },
+        { k: '创建时间', v: data.created_at || '' }
+      ]);
+    }).catch(err => showToast('加载详情失败: ' + err.message, 'error'));
+}
+function viewQADetail(id) {
+  fetch('/api/cpa_qa_history/detail', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id }) })
+    .then(r => r.json()).then(data => {
+      if (data.error) { showToast(data.error, 'error'); return; }
+      let metaStr = '无';
+      if (data.metadata) { const m = typeof data.metadata === 'string' ? JSON.parse(data.metadata) : data.metadata; metaStr = JSON.stringify(m, null, 2); }
+      openDetail('📋 历史问答详情 #' + data.id, [
+        { k: '会话ID', v: escapeHtml(data.session_id || '-') }, { k: '问题', v: escapeHtml(data.question) },
+        { k: '回答', v: escapeHtml(data.answer) }, { k: '元数据', v: escapeHtml(metaStr) },
+        { k: '创建时间', v: data.created_at || '' }
+      ]);
+    }).catch(err => showToast('加载问答详情失败: ' + err.message, 'error'));
+}
+function viewAuditDetail(id) {
+  const item = auditData.find(i => i.id === id);
+  if (!item) { showToast('未找到记录', 'error'); return; }
+  const meta = item.metadata || {};
+  openDetail('🔍 审计辅导详情 #' + id, [
+    { k: '凭证记录ID', v: meta.record_id || item.source_id || '-' },
+    { k: '问题', v: escapeHtml(meta.question || item.summary || '') },
+    { k: '完整内容', v: escapeHtml(item.content || '') },
+    { k: '创建时间', v: item.created_at || '' }
+  ]);
+}
+function viewDreamDetail(id) {
+  fetch('/api/dream/knowledge/detail', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id }) })
+    .then(r => r.json()).then(data => {
+      openDetail('🧠 归档知识详情 #' + data.id, [
+        { k: '知识点', v: escapeHtml(data.topic || '-') }, { k: '摘要', v: escapeHtml(data.summary || '-') },
+        { k: '内容', v: escapeHtml(data.content) }, { k: '分类', v: escapeHtml(data.category || '-') },
+        { k: '可信度', v: data.confidence ? (data.confidence * 100).toFixed(0) + '%' : '-' },
+        { k: '来源会话', v: escapeHtml(data.source_session || '-') }, { k: '做梦批次', v: data.dream_batch || '-' },
+        { k: '矛盾记录', v: escapeHtml(data.contradiction_ids || '无') },
+        { k: '创建时间', v: data.created_at }, { k: '更新时间', v: data.updated_at }
+      ]);
+    }).catch(err => showToast('加载归档知识详情失败: ' + err.message, 'error'));
+}
+
+function loadDreamCategories() {
+  fetch('/api/dream/knowledge/categories').then(r => r.json()).then(data => {
+    const sel = document.getElementById('dreamCategory');
+    if (data.categories) data.categories.forEach(cat => { const o = document.createElement('option'); o.value = cat; o.textContent = cat; sel.appendChild(o); });
+  }).catch(() => {});
+}
+
+loadStats();
+loadDreamCategories();
+</script>
+{% endblock %}

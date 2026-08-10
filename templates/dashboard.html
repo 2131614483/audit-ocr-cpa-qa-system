@@ -1,0 +1,532 @@
+{% extends "base.html" %}
+{% set active = 'dashboard' %}
+{% block title %}审计数据仪表盘 · 审计CPA综合系统{% endblock %}
+{% block page_title %}审计数据仪表盘{% endblock %}
+{% block head %}
+<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+<style>
+  .stat-card{position:relative;overflow:hidden;cursor:pointer;transition:transform .15s,box-shadow .15s}
+  .stat-card:hover{transform:translateY(-3px);box-shadow:0 8px 24px rgba(15,23,42,.12)}
+  .stat-card .stat-icon{position:absolute;right:14px;top:14px;font-size:26px;opacity:.2}
+  .stat-card.b-total{border-left:4px solid #2563eb}
+  .stat-card.b-pass{border-left:4px solid #16a34a}
+  .stat-card.b-fail{border-left:4px solid #dc2626}
+  .stat-card.b-manual{border-left:4px solid #f59e0b}
+  #ai-chat-box{height:430px;overflow-y:auto;background:var(--bg);border:1px solid var(--border);border-radius:var(--radius-sm);padding:14px}
+  .chat-mini .msg .bubble{max-width:92%;font-size:13px}
+  .chat-mini .msg .avatar{width:30px;height:30px;font-size:12px}
+  .ref-panel{border:1px solid #d0d7ff;background:#f8f9ff;border-radius:8px;padding:10px 12px;margin:8px 0;font-size:13px}
+  .ref-item{background:#fff;border:1px solid var(--border);border-radius:8px;padding:8px 10px;margin-bottom:8px}
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="toolbar">
+  <span class="text-2">审计识别结果看板 — 记录统计、风险分析与 AI 辅导</span>
+  <span class="spacer"></span>
+  <button class="btn btn-outline" onclick="refreshData()">⟳ 刷新数据</button>
+</div>
+
+<!-- 统计卡片 -->
+<div class="stat-grid">
+  <div class="stat-card b-total" onclick="filterByConclusion('all')">
+    <span class="stat-icon">🗃️</span>
+    <span class="stat-label">总审计记录</span>
+    <span class="stat-value" id="stat-total">--</span>
+    <span class="stat-sub">点击查看全部</span>
+  </div>
+  <div class="stat-card b-pass" onclick="filterByConclusion('通过')">
+    <span class="stat-icon">✅</span>
+    <span class="stat-label">通过</span>
+    <span class="stat-value" id="stat-passed">--</span>
+    <span class="stat-sub">点击筛选</span>
+  </div>
+  <div class="stat-card b-fail" onclick="filterByConclusion('不通过')">
+    <span class="stat-icon">❌</span>
+    <span class="stat-label">不通过</span>
+    <span class="stat-value" id="stat-failed">--</span>
+    <span class="stat-sub">点击筛选</span>
+  </div>
+  <div class="stat-card b-manual" onclick="filterByConclusion('人工复核')">
+    <span class="stat-icon">👤</span>
+    <span class="stat-label">人工复核</span>
+    <span class="stat-value" id="stat-manual">--</span>
+    <span class="stat-sub">点击筛选</span>
+  </div>
+</div>
+
+<div class="mb-16" id="filter-bar" style="display:none">
+  <span class="tag" style="padding:6px 12px;font-size:13px">
+    筛选: <b id="filter-text">全部</b>
+    <button class="btn btn-ghost btn-sm" onclick="clearFilter()" style="padding:0 6px">✕</button>
+  </span>
+</div>
+
+<div class="grid-2 mb-16">
+  <div class="card">
+    <div class="card-header">风险等级分布</div>
+    <div class="card-body">
+      <div class="mb-8">
+        <div class="flex justify-between text-2"><span>高风险</span><span id="risk-high">0</span></div>
+        <div class="risk-bar mt-8"><div class="high" id="risk-high-bar" style="width:0%"></div></div>
+      </div>
+      <div class="mb-8">
+        <div class="flex justify-between text-2"><span>中风险</span><span id="risk-medium">0</span></div>
+        <div class="risk-bar mt-8"><div class="mid" id="risk-medium-bar" style="width:0%"></div></div>
+      </div>
+      <div class="mb-8">
+        <div class="flex justify-between text-2"><span>低风险</span><span id="risk-low">0</span></div>
+        <div class="risk-bar mt-8"><div class="low" id="risk-low-bar" style="width:0%"></div></div>
+      </div>
+    </div>
+  </div>
+  <div class="card">
+    <div class="card-header">图片类型分布</div>
+    <div class="card-body" id="type-list" style="max-height:230px;overflow-y:auto"></div>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-header">
+    <span>审计记录列表</span>
+    <div class="flex gap-8">
+      <span class="text-3 text-2" style="font-weight:400">知识库规则 <b id="kb-count" class="text-primary">--</b> 条</span>
+      <button class="btn btn-ghost btn-sm" onclick="resetFilters()" title="重置筛选和排序">↺ 重置</button>
+    </div>
+  </div>
+  <div class="table-wrap">
+    <table class="tbl">
+      <thead>
+        <tr>
+          <th class="sortable" onclick="sortBy('image_name')">图片名称 <span class="sort-indicator" data-field="image_name"></span></th>
+          <th class="sortable" onclick="sortBy('image_type')">类型 <span class="sort-indicator" data-field="image_type"></span></th>
+          <th class="sortable" onclick="sortBy('date')">日期 <span class="sort-indicator" data-field="date"></span></th>
+          <th class="sortable" onclick="sortBy('total_amount')">金额 <span class="sort-indicator" data-field="total_amount"></span></th>
+          <th class="sortable" onclick="sortBy('relevant_party')">相关方 <span class="sort-indicator" data-field="relevant_party"></span></th>
+          <th class="sortable" onclick="sortBy('risk_rating')">风险评级 <span class="sort-indicator" data-field="risk_rating"></span></th>
+          <th class="sortable" onclick="sortBy('audit_conclusion')">审计结论 <span class="sort-indicator" data-field="audit_conclusion"></span></th>
+          <th class="sortable" onclick="sortBy('kb_rule_ids')">知识库ID <span class="sort-indicator" data-field="kb_rule_ids"></span></th>
+          <th class="sortable" onclick="sortBy('audit_time')">审计时间 <span class="sort-indicator" data-field="audit_time"></span></th>
+        </tr>
+        <tr>
+          <th><input class="form-control field-search" style="min-width:70px;padding:4px 8px;font-size:12px" placeholder="搜索..." data-field="image_name" oninput="filterAndRender()"></th>
+          <th><input class="form-control field-search" style="min-width:70px;padding:4px 8px;font-size:12px" placeholder="搜索..." data-field="image_type" oninput="filterAndRender()"></th>
+          <th><input class="form-control field-search" style="min-width:70px;padding:4px 8px;font-size:12px" placeholder="搜索..." data-field="date" oninput="filterAndRender()"></th>
+          <th><input class="form-control field-search" style="min-width:70px;padding:4px 8px;font-size:12px" placeholder="搜索..." data-field="total_amount" oninput="filterAndRender()"></th>
+          <th><input class="form-control field-search" style="min-width:70px;padding:4px 8px;font-size:12px" placeholder="搜索..." data-field="relevant_party" oninput="filterAndRender()"></th>
+          <th><input class="form-control field-search" style="min-width:70px;padding:4px 8px;font-size:12px" placeholder="搜索..." data-field="risk_rating" oninput="filterAndRender()"></th>
+          <th><input class="form-control field-search" style="min-width:70px;padding:4px 8px;font-size:12px" placeholder="搜索..." data-field="audit_conclusion" oninput="filterAndRender()"></th>
+          <th><input class="form-control field-search" style="min-width:70px;padding:4px 8px;font-size:12px" placeholder="搜索..." data-field="kb_rule_ids" oninput="filterAndRender()"></th>
+          <th><input class="form-control field-search" style="min-width:70px;padding:4px 8px;font-size:12px" placeholder="搜索..." data-field="audit_time" oninput="filterAndRender()"></th>
+        </tr>
+      </thead>
+      <tbody id="audit-table-body"><tr><td colspan="9" class="tbl-empty">加载中…</td></tr></tbody>
+    </table>
+  </div>
+  <div class="card-body" id="pagination" style="padding:12px 16px"></div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+let auditData = [];
+let currentPage = 1;
+const pageSize = 20;
+let filterConclusion = 'all';
+let sortField = '';
+let sortOrder = 'asc';
+
+document.addEventListener('DOMContentLoaded', function () {
+  loadStatistics();
+  loadAuditData();
+});
+
+function loadStatistics() {
+  fetch('/api/statistics').then(r => r.json()).then(data => {
+    document.getElementById('stat-total').textContent = data.total_records;
+    document.getElementById('stat-passed').textContent = data.passed_count;
+    document.getElementById('stat-failed').textContent = data.failed_count;
+    document.getElementById('stat-manual').textContent = data.manual_count;
+    document.getElementById('kb-count').textContent = data.knowledge_base_count;
+    const total = data.total_records || 1;
+    const dist = data.risk_distribution || {};
+    document.getElementById('risk-high').textContent = dist['高风险'] || 0;
+    document.getElementById('risk-medium').textContent = dist['中风险'] || 0;
+    document.getElementById('risk-low').textContent = dist['低风险'] || 0;
+    document.getElementById('risk-high-bar').style.width = ((dist['高风险'] || 0) / total * 100) + '%';
+    document.getElementById('risk-medium-bar').style.width = ((dist['中风险'] || 0) / total * 100) + '%';
+    document.getElementById('risk-low-bar').style.width = ((dist['低风险'] || 0) / total * 100) + '%';
+    const typeList = document.getElementById('type-list');
+    typeList.innerHTML = (data.type_distribution || []).map(t =>
+      `<div class="flex justify-between items-center" style="padding:6px 2px;border-bottom:1px solid var(--border)">
+         <span>${escapeHtml(t.type)}</span><span class="badge badge-blue">${t.count}</span></div>`).join('') ||
+      '<div class="empty-state">暂无数据</div>';
+  }).catch(e => console.error('加载统计数据失败:', e));
+}
+
+function loadAuditData() {
+  fetch('/api/audit_data').then(r => r.json()).then(data => {
+    auditData = data;
+    renderTable();
+    updatePagination();
+    restoreLastSession();
+  }).catch(e => console.error('加载审计数据失败:', e));
+}
+
+function restoreLastSession() {
+  const lastId = localStorage.getItem('lastAuditRecordId');
+  if (lastId) {
+    const item = auditData.find(i => i.id == lastId);
+    if (item) setTimeout(() => showRecordDetail(item), 300);
+  }
+}
+
+function getFilteredData() {
+  let filtered = auditData;
+  if (filterConclusion !== 'all') {
+    filtered = filtered.filter(i => i.audit_conclusion === filterConclusion);
+  }
+  document.querySelectorAll('.field-search').forEach(input => {
+    const val = input.value.trim().toLowerCase();
+    if (!val) return;
+    const field = input.getAttribute('data-field');
+    filtered = filtered.filter(item => {
+      const cell = item[field];
+      return cell && String(cell).toLowerCase().indexOf(val) !== -1;
+    });
+  });
+  if (sortField) {
+    const order = sortOrder === 'asc' ? 1 : -1;
+    filtered = filtered.slice().sort((a, b) => {
+      let va = a[sortField], vb = b[sortField];
+      if (va == null) va = ''; if (vb == null) vb = '';
+      if (sortField === 'total_amount') { va = parseFloat(va) || 0; vb = parseFloat(vb) || 0; }
+      else { va = String(va).toLowerCase(); vb = String(vb).toLowerCase(); }
+      return va < vb ? -order : va > vb ? order : 0;
+    });
+  }
+  return filtered;
+}
+
+function renderTable() {
+  const filteredData = getFilteredData();
+  const startIndex = (currentPage - 1) * pageSize;
+  const pageData = filteredData.slice(startIndex, startIndex + pageSize);
+  const tbody = document.getElementById('audit-table-body');
+  if (!pageData.length) { tbody.innerHTML = '<tr><td colspan="9" class="tbl-empty">暂无数据</td></tr>'; return; }
+  tbody.innerHTML = pageData.map(item => {
+    const riskCls = item.risk_rating === '高风险' ? 'badge-high' : item.risk_rating === '中风险' ? 'badge-medium' : 'badge-low';
+    const concCls = item.audit_conclusion === '通过' ? 'badge-low' : item.audit_conclusion === '不通过' ? 'badge-high' : 'badge-medium';
+    const kbTags = item.kb_rule_ids ? item.kb_rule_ids.split(',').map(id =>
+      `<span class="tag" style="cursor:pointer;color:var(--primary)" onclick="event.stopPropagation();showKnowledgeBase(${id})">${id}</span>`).join('') : '<span class="text-3">-</span>';
+    return `<tr data-id="${item.id}" style="cursor:pointer" onclick="showRecordDetailById(${item.id})">
+      <td>${escapeHtml(item.image_name) || '-'}</td><td>${escapeHtml(item.image_type) || '-'}</td>
+      <td>${escapeHtml(item.date) || '-'}</td><td>${escapeHtml(item.total_amount) || '-'}</td>
+      <td>${escapeHtml(item.relevant_party) || '-'}</td>
+      <td><span class="badge ${riskCls}">${escapeHtml(item.risk_rating) || '-'}</span></td>
+      <td><span class="badge ${concCls}">${escapeHtml(item.audit_conclusion) || '-'}</span></td>
+      <td>${kbTags}</td><td>${escapeHtml(item.audit_time) || '-'}</td></tr>`;
+  }).join('');
+}
+
+function updatePagination() {
+  const filteredData = getFilteredData();
+  const totalPages = Math.max(1, Math.ceil(filteredData.length / pageSize));
+  if (currentPage > totalPages) currentPage = totalPages;
+  renderPagination(document.getElementById('pagination'), {
+    page: currentPage, totalPages, total: filteredData.length, pageSize,
+    onPage: p => { currentPage = p; renderTable(); updatePagination(); }
+  });
+}
+
+function filterByConclusion(conclusion) {
+  filterConclusion = conclusion; currentPage = 1;
+  document.getElementById('filter-bar').style.display = conclusion === 'all' ? 'none' : 'block';
+  document.getElementById('filter-text').textContent = conclusion;
+  renderTable(); updatePagination();
+}
+function clearFilter() { filterByConclusion('all'); }
+function sortBy(field) {
+  if (sortField === field) sortOrder = sortOrder === 'asc' ? 'desc' : 'asc';
+  else { sortField = field; sortOrder = 'asc'; }
+  document.querySelectorAll('.sort-indicator').forEach(el => { el.classList.remove('active'); el.textContent = ''; });
+  const ind = document.querySelector(`.sort-indicator[data-field="${field}"]`);
+  if (ind) { ind.classList.add('active'); ind.textContent = sortOrder === 'asc' ? ' ▲' : ' ▼'; }
+  currentPage = 1; renderTable(); updatePagination();
+}
+function filterAndRender() { currentPage = 1; renderTable(); updatePagination(); }
+function resetFilters() {
+  document.querySelectorAll('.field-search').forEach(el => el.value = '');
+  filterConclusion = 'all'; sortField = ''; sortOrder = 'asc'; currentPage = 1;
+  document.querySelectorAll('.sort-indicator').forEach(el => { el.classList.remove('active'); el.textContent = ''; });
+  document.getElementById('filter-bar').style.display = 'none';
+  renderTable(); updatePagination();
+}
+function refreshData() { loadStatistics(); loadAuditData(); }
+
+function showRecordDetailById(id) {
+  const item = auditData.find(i => i.id == id);
+  if (item) showRecordDetail(item);
+}
+
+function showRecordDetail(item) {
+  openModal({ title: '审计记录详情', size: 'modal-lg', body: '<div class="empty-state">加载中…</div>' });
+  fetch('/api/audit_record/' + item.id).then(r => r.json()).then(data => {
+    let imageUrl = '';
+    if (data.image_name) imageUrl = '/images/' + data.image_name;
+    else if (data.image_path) imageUrl = '/images/' + data.image_path.split(/[\\/]/).pop();
+    const riskCls = data.risk_rating === '高风险' ? 'badge-high' : data.risk_rating === '中风险' ? 'badge-medium' : 'badge-low';
+    const concCls = data.audit_conclusion === '通过' ? 'badge-low' : data.audit_conclusion === '不通过' ? 'badge-high' : 'badge-medium';
+
+    let content = `
+    <div class="flex gap-16" style="flex-wrap:wrap">
+      <div style="flex:1;min-width:220px">
+        <div class="text-2 mb-8" style="font-size:13px">原始图片</div>
+        <div style="border:1px solid var(--border);border-radius:8px;background:var(--bg);display:flex;align-items:center;justify-content:center;max-height:280px;overflow:hidden">
+          ${imageUrl ? `<img src="${imageUrl}" alt="${escapeHtml(data.image_name)}" style="max-height:280px;object-fit:contain">` : '<span class="text-3" style="padding:40px">暂无图片</span>'}
+        </div>
+        <div class="text-3 mt-8 text-center" style="font-size:12px">${escapeHtml(data.image_name) || '-'}</div>
+      </div>
+      <div style="flex:1.4;min-width:280px">
+        <div class="text-2 mb-8" style="font-size:13px">基本信息</div>
+        <div class="detail-grid">
+          <div class="detail-item"><div class="k">图片类型</div><div class="v">${escapeHtml(data.image_type) || '-'}</div></div>
+          <div class="detail-item"><div class="k">日期</div><div class="v">${escapeHtml(data.date) || '-'}</div></div>
+          <div class="detail-item"><div class="k">总金额</div><div class="v">${escapeHtml(data.total_amount) || '-'}</div></div>
+          <div class="detail-item"><div class="k">相关方</div><div class="v">${escapeHtml(data.relevant_party) || '-'}</div></div>
+          <div class="detail-item"><div class="k">发票代码</div><div class="v">${escapeHtml(data.invoice_code) || '-'}</div></div>
+          <div class="detail-item"><div class="k">发票号码</div><div class="v">${escapeHtml(data.invoice_number) || '-'}</div></div>
+          <div class="detail-item"><div class="k">税号</div><div class="v">${escapeHtml(data.tax_id) || '-'}</div></div>
+          <div class="detail-item"><div class="k">风险评级</div><div class="v"><span class="badge ${riskCls}">${escapeHtml(data.risk_rating) || '-'}</span></div></div>
+          <div class="detail-item"><div class="k">审计结论</div><div class="v"><span class="badge ${concCls}">${escapeHtml(data.audit_conclusion) || '-'}</span></div></div>
+          <div class="detail-item"><div class="k">审计时间</div><div class="v">${escapeHtml(data.audit_time) || '-'}</div></div>
+        </div>
+      </div>
+    </div>`;
+    if (data.seal_type || data.seal_number || data.seal_clarity || data.joint_seal) {
+      content += `<div class="mt-16"><div class="text-2 mb-8" style="font-size:13px">印章信息</div>
+        <div class="detail-grid">
+          <div class="detail-item"><div class="k">印章类型</div><div class="v">${escapeHtml(data.seal_type) || '-'}</div></div>
+          <div class="detail-item"><div class="k">印章编号</div><div class="v">${escapeHtml(data.seal_number) || '-'}</div></div>
+          <div class="detail-item"><div class="k">印章清晰度</div><div class="v">${escapeHtml(data.seal_clarity) || '-'}</div></div>
+          <div class="detail-item"><div class="k">骑缝章完整性</div><div class="v">${escapeHtml(data.joint_seal) || '-'}</div></div>
+        </div></div>`;
+    }
+    if (data.unified_social_credit_code || data.legal_person || data.valid_period) {
+      content += `<div class="mt-16"><div class="text-2 mb-8" style="font-size:13px">证照信息</div>
+        <div class="detail-grid">
+          <div class="detail-item"><div class="k">统一社会信用代码</div><div class="v">${escapeHtml(data.unified_social_credit_code) || '-'}</div></div>
+          <div class="detail-item"><div class="k">法人</div><div class="v">${escapeHtml(data.legal_person) || '-'}</div></div>
+          <div class="detail-item"><div class="k">证照有效期</div><div class="v">${escapeHtml(data.valid_period) || '-'}</div></div>
+        </div></div>`;
+    }
+    if (data.risk_description || data.audit_reason) {
+      content += `<div class="mt-16"><div class="text-2 mb-8" style="font-size:13px">审计详情</div>
+        ${data.risk_description ? `<div class="kv-monitor"><b>风险说明:</b> ${escapeHtml(data.risk_description)}</div>` : ''}
+        ${data.audit_reason ? `<div class="kv-monitor"><b>审计说明:</b> ${escapeHtml(data.audit_reason)}</div>` : ''}</div>`;
+    }
+    if (data.full_json) {
+      let jsonDisplay = '';
+      try { const o = typeof data.full_json === 'string' ? JSON.parse(data.full_json) : data.full_json; jsonDisplay = JSON.stringify(o, null, 2); }
+      catch (e) { jsonDisplay = data.full_json; }
+      content += `<div class="mt-16"><div class="text-2 mb-8" style="font-size:13px">完整 JSON 数据</div>
+        <pre class="mono" style="background:#0f172a;color:#e2e8f0;padding:12px;border-radius:8px;max-height:260px;overflow:auto;font-size:12px">${escapeHtml(jsonDisplay)}</pre></div>`;
+    }
+    if (data.kb_rule_ids && data.kb_rule_ids.split(',').length) {
+      content += `<div class="mt-16"><div class="text-2 mb-8" style="font-size:13px">关联知识库规则</div><div id="related-kb-list"><div class="empty-state">加载中…</div></div></div>`;
+    }
+    content += `
+    <div class="mt-16" style="border-top:1px solid var(--border);padding-top:14px">
+      <div class="flex justify-between items-center mb-8">
+        <b>🤖 智能审计辅导分析</b><span class="text-3" style="font-size:12px">结合CPA知识库进行智能审计辅导</span>
+      </div>
+      <div class="form-row mb-8">
+        <div class="form-group"><label>检索模式</label>
+          <select class="form-select" id="ai-search-mode">
+            <option value="vector">向量检索（语义）</option><option value="bm25">全文检索（关键词）</option>
+            <option value="hybrid">混合检索（RRF）</option><option value="graph">知识图谱检索</option></select></div>
+        <div class="form-group"><label>AI模型</label>
+          <select class="form-select" id="ai-model-select">
+            <option value="">默认（当前配置）</option><option value="deepseek">DeepSeek</option>
+            <option value="doubao">火山引擎豆包</option><option value="ollama">Ollama 本地</option>
+            <option value="openai">OpenAI</option><option value="qwen">阿里通义千问</option>
+            <option value="zhipu">智谱AI</option></select></div>
+        <div class="form-group" style="flex:0"><label>&nbsp;</label><button class="btn btn-outline" onclick="clearChatAndDelete()">🗑 清空对话</button></div>
+      </div>
+      <div id="ai-chat-box" class="chat-mini">
+        <div class="empty-state" id="ai-chat-placeholder" style="padding:30px 0">点击下方按钮或输入问题开始审计辅导</div>
+        <div id="ai-chat-messages"></div>
+      </div>
+      <div class="chat-input-row mt-8">
+        <textarea class="chat-input" id="ai-user-question" rows="1" placeholder="输入你想问的问题（可选，留空则自动生成辅导分析）"></textarea>
+        <button class="btn btn-primary" id="ask-ai-btn" onclick="sendChatMessage()">问问AI</button>
+      </div>
+      <div class="text-3 mt-8" style="font-size:12px">💡 留空直接发送将自动分析该审计记录的风险、知识链接、审计建议和学习指引</div>
+    </div>`;
+    modalBody(content);
+    clearChat();
+    currentRecordId = data.id;
+    localStorage.setItem('lastAuditRecordId', data.id);
+    loadChatHistory(data.id);
+    document.getElementById('ai-user-question').addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendChatMessage(); } });
+    if (data.kb_rule_ids) {
+      fetch('/api/knowledge_base/batch?ids=' + data.kb_rule_ids).then(r => r.json()).then(kbList => {
+        const html = kbList.map(kb => `<div class="result-item">
+          <div class="flex justify-between items-center">
+            <b>${escapeHtml(kb.rule_name) || '-'}</b>
+            <span class="badge ${kb.risk_level === '高风险' ? 'badge-high' : kb.risk_level === '中风险' ? 'badge-medium' : 'badge-low'}">${escapeHtml(kb.risk_level) || '-'}</span></div>
+          <div class="src">${escapeHtml(kb.rule_id) || '-'} · 分类: ${escapeHtml(kb.category) || '-'}</div>
+          <div class="content">${escapeHtml(kb.content) || '-'}</div></div>`).join('');
+        document.getElementById('related-kb-list').innerHTML = html || '<div class="empty-state">未找到相关知识库</div>';
+      }).catch(() => { document.getElementById('related-kb-list').innerHTML = '<div class="empty-state">加载知识库失败</div>'; });
+    }
+  }).catch(e => { modalBody('<div class="empty-state">加载失败: ' + escapeHtml(e.message) + '</div>'); });
+}
+
+function showKnowledgeBase(kbId) {
+  openModal({ title: '知识库详情', size: 'modal-sm', body: '<div class="empty-state">加载中…</div>' });
+  fetch('/api/knowledge_base/' + kbId).then(r => r.json()).then(data => {
+    const cls = data.risk_level === '高风险' ? 'badge-high' : data.risk_level === '中风险' ? 'badge-medium' : 'badge-low';
+    modalBody(`
+      <div class="detail-item mb-8"><div class="k">规则名称</div><div class="v">${escapeHtml(data.rule_name) || '-'}</div></div>
+      <div class="detail-grid mb-16">
+        <div class="detail-item"><div class="k">规则编号</div><div class="v">${escapeHtml(data.rule_id) || '-'}</div></div>
+        <div class="detail-item"><div class="k">分类</div><div class="v">${escapeHtml(data.category) || '-'}</div></div>
+        <div class="detail-item"><div class="k">风险等级</div><div class="v"><span class="badge ${cls}">${escapeHtml(data.risk_level) || '-'}</span></div></div>
+      </div>
+      <div class="text-2 mb-8" style="font-size:13px">规则内容</div>
+      <div class="result-item">${escapeHtml(data.content) || '-'}</div>
+      <div class="text-3 mt-16" style="font-size:12px">创建时间: ${escapeHtml(data.created_at) || '-'}</div>`);
+  }).catch(e => modalBody('<div class="empty-state">加载失败</div>'));
+}
+
+/* ====== AI 审计辅导聊天 ====== */
+let chatHistory = [];
+let currentRecordId = null;
+
+function addChatMessage(role, content, isStreaming) {
+  const ph = document.getElementById('ai-chat-placeholder');
+  if (ph) ph.style.display = 'none';
+  const box = document.getElementById('ai-chat-messages');
+  const div = document.createElement('div');
+  div.className = 'msg ' + (role === 'user' ? 'user' : 'ai');
+  div.innerHTML = `<div class="avatar">${role === 'user' ? '我' : 'AI'}</div>
+    <div class="bubble"><div class="md-body chat-content">${isStreaming ? '' : mdRender(content)}</div></div>`;
+  box.appendChild(div);
+  document.getElementById('ai-chat-box').scrollTop = document.getElementById('ai-chat-box').scrollHeight;
+  return div;
+}
+function updateStreamingMessage(msgDiv, content) {
+  const c = msgDiv.querySelector('.chat-content');
+  if (c) { c.innerHTML = mdRender(content); document.getElementById('ai-chat-box').scrollTop = document.getElementById('ai-chat-box').scrollHeight; }
+}
+function clearChat() {
+  chatHistory = [];
+  const c = document.getElementById('ai-chat-messages'); if (c) c.innerHTML = '';
+  const ph = document.getElementById('ai-chat-placeholder'); if (ph) ph.style.display = '';
+}
+function clearChatAndDelete() {
+  clearChat();
+  localStorage.removeItem('lastAuditRecordId');
+  if (currentRecordId) fetch('/api/audit_chat_history/' + currentRecordId + '/clear', { method: 'POST' }).catch(() => {});
+}
+function loadChatHistory(recordId) {
+  fetch('/api/audit_chat_history/' + recordId).then(r => r.json()).then(data => {
+    if (data.items) data.items.forEach(item => {
+      if (item.question) { addChatMessage('user', item.question); chatHistory.push({ role: 'user', content: item.question }); }
+      if (item.answer) { addChatMessage('assistant', item.answer); chatHistory.push({ role: 'assistant', content: item.answer }); }
+    });
+  }).catch(e => console.error('加载聊天历史失败:', e));
+}
+
+function addReferenceSection(refs) {
+  const ph = document.getElementById('ai-chat-placeholder'); if (ph) ph.style.display = 'none';
+  const box = document.getElementById('ai-chat-messages');
+  const refId = 'ref-' + Date.now();
+  const sel = document.getElementById('ai-search-mode');
+  const modeText = sel ? sel.options[sel.selectedIndex].text : '检索';
+  const div = document.createElement('div');
+  div.className = 'ref-panel';
+  div.innerHTML = `<div class="flex justify-between items-center" style="cursor:pointer" onclick="toggleRefs('${refId}')">
+      <b style="color:var(--primary)">📚 CPA知识库引用 (${modeText})</b><span class="text-3">${refs.length} 条</span></div>
+    <div id="${refId}" style="display:none;margin-top:10px">
+      ${refs.map((ref, i) => `<div class="ref-item">
+        <div class="flex justify-between items-center"><b>${i + 1}. ${escapeHtml(ref.source_label || '知识库')}</b>
+          <span class="badge badge-blue">相似度 ${(ref.similarity * 100).toFixed(1)}%</span></div>
+        <div class="content mt-8">${escapeHtml(ref.content_preview || '')}</div></div>`).join('')}</div>`;
+  box.appendChild(div);
+  document.getElementById('ai-chat-box').scrollTop = document.getElementById('ai-chat-box').scrollHeight;
+}
+function toggleRefs(refId) {
+  const el = document.getElementById(refId);
+  if (el) el.style.display = el.style.display === 'none' ? 'block' : 'none';
+}
+
+function sendChatMessage() {
+  const btn = document.getElementById('ask-ai-btn');
+  const input = document.getElementById('ai-user-question');
+  const searchMode = document.getElementById('ai-search-mode').value;
+  const modelProvider = document.getElementById('ai-model-select').value;
+  const userQuestion = input.value.trim();
+  btn.disabled = true; btn.textContent = 'AI思考中…';
+  if (userQuestion) { addChatMessage('user', userQuestion); chatHistory.push({ role: 'user', content: userQuestion }); }
+  const isFollowUp = chatHistory.some(m => m.role === 'assistant');
+  const loadingMsg = addChatMessage('assistant', isFollowUp ? '思考中…' : '正在检索CPA知识库并生成分析…', true);
+
+  function doSend(payload) {
+    payload.search_mode = searchMode;
+    payload.model_provider = modelProvider;
+    payload.user_question = userQuestion;
+    payload.history = chatHistory.slice(0, -1);
+    fetch('/api/ask_ai_stream', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) })
+      .then(res => {
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '', fullAnswer = '', refsDisplayed = false;
+        function read() {
+          return reader.read().then(result => {
+            if (result.done) {
+              btn.disabled = false; btn.textContent = '问问AI'; input.value = '';
+              if (fullAnswer) chatHistory.push({ role: 'assistant', content: fullAnswer });
+              return;
+            }
+            buffer += decoder.decode(result.value, { stream: true });
+            const lines = buffer.split('\n'); buffer = lines.pop() || '';
+            lines.forEach(line => {
+              const t = line.trim();
+              if (t.startsWith('data: ')) {
+                try {
+                  const ev = JSON.parse(t.slice(6));
+                  if (ev.type === 'meta' && ev.cpa_referenced && !refsDisplayed) { refsDisplayed = true; addReferenceSection(ev.cpa_referenced); }
+                  else if (ev.type === 'content') { fullAnswer += ev.content; updateStreamingMessage(loadingMsg, fullAnswer); }
+                  else if (ev.type === 'error') { updateStreamingMessage(loadingMsg, '**错误:** ' + ev.content); btn.disabled = false; btn.textContent = '问问AI'; }
+                } catch (e) {}
+              }
+            });
+            return read();
+          });
+        }
+        return read();
+      })
+      .catch(err => { btn.disabled = false; btn.textContent = '问问AI'; updateStreamingMessage(loadingMsg, '**请求失败:** ' + err.message); });
+  }
+
+  if (isFollowUp) { doSend({ id: currentRecordId }); return; }
+  fetch('/api/audit_record/' + currentRecordId).then(r => r.json()).then(record => {
+    let kbRulesText = '';
+    if (record.kb_rule_ids) {
+      return fetch('/api/knowledge_base/batch?ids=' + record.kb_rule_ids).then(r => r.json()).then(kbList => {
+        kbList.forEach(kb => { kbRulesText += '【' + kb.rule_name + '】(' + kb.risk_level + '): ' + kb.content + '\n'; });
+        return { record, kbRulesText };
+      });
+    }
+    return { record, kbRulesText };
+  }).then(({ record, kbRulesText }) => {
+    doSend({ id: record.id, image_type: record.image_type, risk_rating: record.risk_rating,
+      audit_conclusion: record.audit_conclusion, risk_description: record.risk_description,
+      audit_reason: record.audit_reason, total_amount: record.total_amount,
+      relevant_party: record.relevant_party, date: record.date, kb_rules_text: kbRulesText });
+  }).catch(err => { btn.disabled = false; btn.textContent = '问问AI'; updateStreamingMessage(loadingMsg, '**获取记录详情失败:** ' + err.message); });
+}
+</script>
+{% endblock %}

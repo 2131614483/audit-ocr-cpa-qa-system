@@ -1,0 +1,79 @@
+{# ============================================================
+   base.html — 统一外壳（侧边栏 + 顶栏 + 内容区）
+   子页面: {% extends "base.html" %} + {% block content %} + {% block scripts %}
+   激活导航: {% set active = 'dashboard' %}
+   ============================================================ #}
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>{% block title %}审计OCR + CPA问答综合系统{% endblock %}</title>
+<link rel="stylesheet" href="/static/css/app.css">
+{% block head %}{% endblock %}
+</head>
+<body>
+{% set active = active | default('') %}
+<div class="app-layout">
+  <div class="sidebar-mask" onclick="toggleSidebar()"></div>
+  <aside class="sidebar">
+    <div class="sidebar-brand">
+      <span class="logo">审</span>
+      <span>审计CPA综合系统</span>
+    </div>
+    <nav class="sidebar-nav">
+      <div class="nav-group">
+        <div class="nav-group-title">审计</div>
+        <a class="nav-item {{ 'active' if active == 'dashboard' }}" href="/dashboard"><span class="icon">📊</span>审计仪表盘</a>
+        <a class="nav-item {{ 'active' if active == 'knowledge_base' }}" href="/knowledge_base"><span class="icon">📖</span>审计知识库</a>
+      </div>
+      <div class="nav-group">
+        <div class="nav-group-title">CPA 问答</div>
+        <a class="nav-item {{ 'active' if active == 'index' }}" href="/"><span class="icon">💬</span>智能对话</a>
+        <a class="nav-item {{ 'active' if active == 'kb_browser' }}" href="/kb-browser"><span class="icon">🔍</span>知识库检索</a>
+      </div>
+      <div class="nav-group">
+        <div class="nav-group-title">知识图谱</div>
+        <a class="nav-item {{ 'active' if active == 'kg' }}" href="/kg/explorer"><span class="icon">🕸️</span>图谱浏览器</a>
+      </div>
+      <div class="nav-group">
+        <div class="nav-group-title">Agent</div>
+        <a class="nav-item {{ 'active' if active == 'agents' }}" href="/agents"><span class="icon">🤖</span>Agent 工坊</a>
+        <a class="nav-item {{ 'active' if active == 'teams' }}" href="/teams"><span class="icon">👥</span>团队设计器</a>
+      </div>
+      <div class="nav-group">
+        <div class="nav-group-title">系统</div>
+        <a class="nav-item {{ 'active' if active == 'admin' }}" href="/admin"><span class="icon">🗂️</span>管理后台</a>
+        <a class="nav-item {{ 'active' if active == 'settings' }}" href="/settings"><span class="icon">⚙️</span>API 配置</a>
+      </div>
+    </nav>
+    <div class="sidebar-foot">v2.0 统一界面 · :5001</div>
+  </aside>
+
+  <div class="main-wrap">
+    <header class="topbar">
+      <button class="btn btn-ghost btn-sm" onclick="toggleSidebar()" style="display:none" data-sidebar-toggle>☰</button>
+      <div class="flex flex-1 items-center gap-8">
+        <span style="font-size:16px;font-weight:600">{% block page_title %}综合系统{% endblock %}</span>
+        {% block breadcrumb %}{% endblock %}
+      </div>
+      {% block topbar_right %}{% endblock %}
+    </header>
+    <main class="page-content {% block content_class %}{% endblock %}">
+      {% block content %}{% endblock %}
+    </main>
+  </div>
+</div>
+<script src="/static/js/app.js"></script>
+<script>
+  /* 移动端显示侧边栏切换按钮 */
+  function _syncSidebarBtn() {
+    var btn = document.querySelector('[data-sidebar-toggle]');
+    if (btn) btn.style.display = (window.innerWidth <= 900) ? 'inline-flex' : 'none';
+  }
+  window.addEventListener('resize', _syncSidebarBtn);
+  _syncSidebarBtn();
+</script>
+{% block scripts %}{% endblock %}
+</body>
+</html>

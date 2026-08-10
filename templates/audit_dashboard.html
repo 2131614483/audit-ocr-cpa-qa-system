@@ -1,0 +1,969 @@
+<!--
+  审计OCR数据仪表盘
+  10大类 + 综合展示
+-->
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>审计OCR数据仪表盘</title>
+    <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Arial, sans-serif;
+            background: #f0f2f5;
+            min-height: 100vh;
+        }
+        .top-nav {
+            position: fixed; top: 0; left: 0; right: 0; height: 56px;
+            background: white; border-bottom: 1px solid #e8e8e8;
+            display: flex; align-items: center; padding: 0 20px 0 24px;
+            z-index: 1000; box-shadow: 0 1px 4px rgba(0,0,0,0.04);
+        }
+        .top-nav .brand { font-size: 17px; font-weight: 700; color: #667eea; margin-right: 32px; white-space: nowrap; }
+        .top-nav .nav-links { display: flex; gap: 4px; flex: 1; }
+        .top-nav .nav-links a {
+            text-decoration: none; padding: 8px 16px; border-radius: 8px;
+            font-size: 14px; color: #555; transition: all 0.2s;
+            display: flex; align-items: center; gap: 6px;
+        }
+        .top-nav .nav-links a:hover { background: #f0f2ff; color: #667eea; }
+        .top-nav .nav-links a.active { background: #667eea; color: white; }
+        .app-layout { margin-top: 56px; padding: 24px 32px; max-width: 1400px; margin-left: auto; margin-right: auto; }
+        .page-header { margin-bottom: 24px; }
+        .page-header h1 { font-size: 24px; color: #333; display: flex; align-items: center; gap: 10px; }
+        .page-header p { color: #888; font-size: 14px; margin-top: 4px; }
+        .stats-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 16px; margin-bottom: 28px; }
+        .stat-card {
+            background: white; border-radius: 12px; padding: 20px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.06); transition: transform 0.2s, box-shadow 0.2s;
+        }
+        .stat-card:hover { transform: translateY(-2px); box-shadow: 0 6px 20px rgba(0,0,0,0.1); }
+        .stat-card .label { font-size: 13px; color: #888; margin-bottom: 6px; }
+        .stat-card .value { font-size: 28px; font-weight: 700; color: #333; overflow-wrap: break-word; word-break: break-all; }
+        .stat-card .sub { font-size: 12px; color: #999; margin-top: 4px; }
+        .stat-card.primary .value { color: #667eea; }
+        .stat-card.success .value { color: #4caf50; }
+        .stat-card.warning .value { color: #ff9800; }
+        .stat-card.danger .value { color: #f44336; }
+        .stat-card.info .value { color: #2196f3; }
+        .section-title { font-size: 18px; font-weight: 600; color: #333; margin-bottom: 16px; display: flex; align-items: center; gap: 8px; }
+        .category-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 16px; margin-bottom: 28px; }
+        .category-card {
+            background: white; border-radius: 12px; padding: 18px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.06); cursor: pointer;
+            transition: transform 0.2s, box-shadow 0.2s; border-left: 4px solid #667eea;
+        }
+        .category-card:hover { transform: translateY(-2px); box-shadow: 0 6px 20px rgba(0,0,0,0.1); }
+        .category-card .cat-name { font-size: 15px; font-weight: 600; color: #333; margin-bottom: 8px; }
+        .category-card .cat-count { font-size: 24px; font-weight: 700; color: #667eea; }
+        .category-card .cat-risk { display: flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+        .category-card .cat-risk .risk-badge {
+            font-size: 11px; padding: 2px 8px; border-radius: 10px;
+        }
+        .risk-badge.high { background: #ffebee; color: #c62828; }
+        .risk-badge.medium { background: #fff8e1; color: #f57f17; }
+        .risk-badge.low { background: #e8f5e9; color: #2e7d32; }
+        .risk-badge.unknown { background: #f5f5f5; color: #999; }
+        .charts-row { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 28px; }
+        .chart-card {
+            background: white; border-radius: 12px; padding: 20px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+        }
+        .chart-card .chart-title { font-size: 14px; font-weight: 600; color: #555; margin-bottom: 12px; }
+        .chart-bar { display: flex; align-items: center; margin-bottom: 8px; }
+        .chart-bar .bar-label { width: 100px; font-size: 12px; color: #666; flex-shrink: 0; }
+        .chart-bar .bar-track { flex: 1; height: 22px; background: #f0f0f0; border-radius: 11px; overflow: hidden; }
+        .chart-bar .bar-fill { height: 100%; border-radius: 11px; transition: width 0.6s ease; }
+        .chart-bar .bar-value { width: 50px; text-align: right; font-size: 12px; color: #888; flex-shrink: 0; }
+        .conclusion-chart { display: flex; gap: 12px; flex-wrap: wrap; }
+        .conclusion-item {
+            flex: 1; min-width: 120px; text-align: center; padding: 16px;
+            border-radius: 10px; background: #f8f9fa;
+        }
+        .conclusion-item .num { font-size: 24px; font-weight: 700; }
+        .conclusion-item .lbl { font-size: 12px; color: #888; margin-top: 4px; }
+        .conclusion-item.passed .num { color: #4caf50; }
+        .conclusion-item.failed .num { color: #f44336; }
+        .conclusion-item.manual .num { color: #ff9800; }
+        .conclusion-item.unknown .num { color: #999; }
+        .table-container {
+            background: white; border-radius: 12px; padding: 20px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.06); margin-bottom: 28px; overflow-x: auto;
+        }
+        table { width: 100%; border-collapse: collapse; font-size: 13px; }
+        th { text-align: left; padding: 12px 10px; border-bottom: 2px solid #eee; color: #555; font-weight: 600; white-space: nowrap; }
+        td { padding: 10px; border-bottom: 1px solid #f0f0f0; color: #333; }
+        tr:hover td { background: #f8f9ff; }
+        .badge-risk { font-size: 11px; padding: 3px 10px; border-radius: 12px; }
+        .badge-risk.高 { background: #ffebee; color: #c62828; }
+        .badge-risk.中 { background: #fff8e1; color: #f57f17; }
+        .badge-risk.低 { background: #e8f5e9; color: #2e7d32; }
+        .badge-conclusion { font-size: 11px; padding: 3px 10px; border-radius: 12px; }
+        .badge-conclusion.通过 { background: #e8f5e9; color: #2e7d32; }
+        .badge-conclusion.不通过 { background: #ffebee; color: #c62828; }
+        .badge-conclusion.需人工 { background: #fff8e1; color: #f57f17; }
+        .loading { text-align: center; padding: 40px; color: #999; font-size: 14px; }
+        .loading .spinner { display: inline-block; width: 32px; height: 32px; border: 3px solid #e0e0e0; border-top-color: #667eea; border-radius: 50%; animation: spin 0.8s linear infinite; margin-bottom: 12px; }
+        @keyframes spin { to { transform: rotate(360deg); } }
+        .error-msg { text-align: center; padding: 40px; color: #f44336; }
+        .filter-bar { display: flex; gap: 12px; margin-bottom: 16px; flex-wrap: wrap; align-items: center; }
+        .filter-bar select, .filter-bar input {
+            padding: 8px 12px; border: 1px solid #ddd; border-radius: 8px; font-size: 13px; background: white;
+        }
+        .filter-bar select:focus, .filter-bar input:focus { outline: none; border-color: #667eea; }
+        .filter-bar .btn {
+            padding: 8px 16px; border: none; border-radius: 8px; font-size: 13px; cursor: pointer;
+            background: #667eea; color: white; transition: opacity 0.2s;
+        }
+        .filter-bar .btn:hover { opacity: 0.9; }
+        .filter-bar .btn.secondary { background: #f0f0f0; color: #555; }
+        .pagination { display: flex; justify-content: center; align-items: center; gap: 4px; margin-top: 16px; flex-wrap: wrap; }
+        .pagination button {
+            padding: 6px 12px; border: 1px solid #ddd; border-radius: 6px;
+            background: white; color: #555; cursor: pointer; font-size: 13px; transition: all 0.2s;
+        }
+        .pagination button:hover { border-color: #667eea; color: #667eea; }
+        .pagination button.active { background: #667eea; color: white; border-color: #667eea; }
+        .pagination button:disabled { opacity: 0.4; cursor: not-allowed; }
+        .pagination .ellipsis { padding: 6px 4px; color: #999; font-size: 13px; user-select: none; }
+        .pagination .jump-input { width: 50px; padding: 5px 6px; border: 1px solid #ddd; border-radius: 6px; font-size: 13px; text-align: center; outline: none; }
+        .pagination .jump-input:focus { border-color: #667eea; }
+        .pagination .jump-btn { padding: 6px 10px; border: 1px solid #667eea; border-radius: 6px; background: #667eea; color: white; cursor: pointer; font-size: 13px; }
+        .pagination .jump-btn:hover { opacity: 0.9; }
+        .pagination .page-info { font-size: 12px; color: #888; margin: 0 8px; }
+        .modal-overlay {
+            display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(0,0,0,0.5); z-index: 2000; justify-content: center; align-items: center;
+        }
+        .modal-overlay.active { display: flex; }
+        .modal {
+            background: white; border-radius: 16px; padding: 28px; max-width: 700px;
+            width: 90%; max-height: 80vh; overflow-y: auto; box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+        }
+        .modal h2 { font-size: 18px; font-weight: 600; color: #333; margin-bottom: 16px; }
+        .modal-close {
+            float: right; border: none; background: none; font-size: 24px;
+            cursor: pointer; color: #999; padding: 0 4px;
+        }
+        .modal-close:hover { color: #333; }
+        .detail-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+        .detail-item { margin-bottom: 8px; }
+        .detail-item .label { font-size: 12px; color: #888; margin-bottom: 2px; }
+        .detail-item .value { font-size: 14px; color: #333; font-weight: 500; }
+        .detail-item.full { grid-column: span 2; }
+        .detail-ai-section {
+            margin-top: 20px; border-top: 1px solid #e8e8e8; padding-top: 16px;
+        }
+        .ai-header {
+            font-size: 15px; font-weight: 600; color: #333; margin-bottom: 12px;
+            display: flex; align-items: center; gap: 6px;
+        }
+        .ai-icon { font-size: 20px; }
+        .ai-chat-container {
+            background: #f8f9fa; border-radius: 12px; border: 1px solid #e8e8e8;
+            min-height: 120px; max-height: 360px; overflow-y: auto;
+        }
+        .ai-chat-messages { padding: 12px; }
+        .ai-placeholder {
+            text-align: center; color: #999; padding: 30px 20px;
+        }
+        .ai-placeholder-icon { font-size: 40px; margin-bottom: 8px; }
+        .ai-placeholder p { font-size: 13px; }
+        .ai-message { margin-bottom: 12px; }
+        .ai-message-user { text-align: right; }
+        .ai-message-assistant { text-align: left; }
+        .ai-message-content {
+            display: inline-block; padding: 8px 14px; border-radius: 12px;
+            font-size: 13px; line-height: 1.6; max-width: 85%; text-align: left;
+        }
+        .ai-message-user .ai-message-content {
+            background: #667eea; color: white; border-bottom-right-radius: 4px;
+        }
+        .ai-message-assistant .ai-message-content {
+            background: white; color: #333; border: 1px solid #e8e8e8;
+            border-bottom-left-radius: 4px;
+        }
+        .ai-message-assistant .ai-message-content p { margin: 4px 0; }
+        .ai-message-assistant .ai-message-content ul, 
+        .ai-message-assistant .ai-message-content ol { padding-left: 18px; margin: 4px 0; }
+        .ai-message-assistant .ai-message-content h1,
+        .ai-message-assistant .ai-message-content h2,
+        .ai-message-assistant .ai-message-content h3 { font-size: 14px; margin: 8px 0 4px 0; }
+        .ai-reference-section {
+            background: #fffbe6; border: 1px solid #ffe58f; border-radius: 8px;
+            padding: 8px 12px; margin-bottom: 12px; font-size: 12px;
+        }
+        .ref-title { font-weight: 600; margin-bottom: 4px; color: #d48806; }
+        .ref-item { margin: 2px 0; color: #666; }
+        .ref-badge {
+            display: inline-block; background: #d48806; color: white;
+            border-radius: 8px; padding: 0 6px; font-size: 11px; line-height: 1.6;
+        }
+        .ref-sim { color: #999; font-size: 11px; }
+        .ai-input-row {
+            display: flex; gap: 8px; margin-top: 10px;
+        }
+        .ai-input {
+            flex: 1; padding: 8px 14px; border: 1px solid #d9d9d9; border-radius: 8px;
+            font-size: 13px; outline: none; transition: border-color 0.2s;
+        }
+        .ai-input:focus { border-color: #667eea; box-shadow: 0 0 0 2px rgba(102,126,234,0.1); }
+        .ai-btn {
+            padding: 8px 18px; background: #667eea; color: white; border: none;
+            border-radius: 8px; font-size: 13px; cursor: pointer; white-space: nowrap;
+            transition: all 0.2s; font-weight: 500;
+        }
+        .ai-btn:hover { background: #5a6fd6; }
+        .ai-btn:disabled { background: #b0b8e0; cursor: not-allowed; }
+        .ai-tools-bar { display: flex; gap: 8px; margin-bottom: 12px; flex-wrap: wrap; align-items:center; }
+        .ai-tools-bar .mode-group { display: flex; align-items: center; gap: 4px; }
+        .ai-tools-bar .mode-label { font-size: 12px; color: #888; margin-right: 4px; white-space: nowrap; }
+.mode-chip {
+            display: inline-block; padding: 4px 12px; border: 1px solid #d9d9d9; border-radius: 14px;
+            font-size: 12px; cursor: pointer; color: #666; background: #fff; transition: all 0.2s; user-select: none;
+        }
+        .mode-chip:hover { border-color: #667eea; color: #667eea; }
+        .mode-chip.active { background: #667eea; color: white; border-color: #667eea; }
+        .model-select {
+            padding: 4px 10px; border: 1px solid #d9d9d9; border-radius: 8px; font-size: 12px;
+            outline: none; color: #555; background: #fff; cursor: pointer;
+        }
+        .model-select:focus { border-color: #667eea; }
+        .ai-subtitle { font-size: 12px; color: #999; margin: -8px 0 12px 0; }
+        .comprehensive-section {
+            background: linear-gradient(135deg, #667eea, #764ba2);
+            border-radius: 16px; padding: 28px; color: white; margin-bottom: 28px;
+        }
+        .comprehensive-section .comp-title { font-size: 20px; font-weight: 700; margin-bottom: 16px; }
+        .comprehensive-section .comp-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 16px; }
+        .comprehensive-section .comp-item { text-align: center; padding: 16px; background: rgba(255,255,255,0.15); border-radius: 12px; }
+        .comprehensive-section .comp-item .num { font-size: 32px; font-weight: 700; }
+        .comprehensive-section .comp-item .lbl { font-size: 13px; opacity: 0.9; margin-top: 4px; }
+        .comprehensive-section .comp-item .sub { font-size: 11px; opacity: 0.7; margin-top: 2px; }
+        .trend-chart { display: flex; align-items: flex-end; gap: 3px; height: 120px; padding-top: 10px; position: relative; margin-left: 60px; }
+        .trend-bar { flex: 1; min-width: 20px; background: linear-gradient(to top, #667eea, #a78bfa); border-radius: 4px 4px 0 0; position: relative; transition: height 0.4s ease; cursor: pointer; }
+        .trend-bar .trend-label { position: absolute; bottom: -18px; left: 50%; transform: translateX(-50%); font-size: 10px; color: #999; white-space: nowrap; opacity: 0; transition: opacity 0.2s; pointer-events: none; }
+        .trend-bar:hover .trend-label { opacity: 1; }
+        .trend-bar:hover .trend-hover-val { opacity: 1; }
+        .trend-hover-val { position: absolute; top: -22px; left: 50%; transform: translateX(-50%); font-size: 11px; color: #667eea; font-weight: 700; opacity: 0; transition: opacity 0.2s; white-space: nowrap; background: rgba(255,255,255,0.9); padding: 0 4px; border-radius: 3px; pointer-events: none; }
+        .trend-yaxis { position: absolute; left: -55px; bottom: 0; top: 0; display: flex; flex-direction: column; justify-content: space-between; font-size: 10px; color: #999; }
+        .trend-yaxis span { line-height: 1; }
+        .empty-state { text-align: center; padding: 40px; color: #999; }
+        .empty-state .icon { font-size: 48px; margin-bottom: 12px; }
+        .empty-state p { font-size: 14px; }
+    </style>
+</head>
+<body>
+    <nav class="top-nav">
+        <div class="brand">📊 审计OCR仪表盘</div>
+        <div class="nav-links">
+            <a href="/">💬 CPA问答</a>
+            <a href="/dashboard" class="active">📊 审计仪表盘</a>
+        </div>
+    </nav>
+
+    <div class="app-layout">
+        <div class="page-header">
+            <h1>📊 审计OCR数据仪表盘</h1>
+            <p>10大凭证类别数据概览 · 风险分布 · 审计结论统计</p>
+        </div>
+
+        <!-- 综合概览 -->
+        <div class="comprehensive-section" id="comprehensiveSection">
+            <div class="comp-title">🏆 综合概览</div>
+            <div class="loading" id="compLoading"><div class="spinner"></div><br>加载中...</div>
+            <div class="comp-grid" id="compGrid" style="display:none;"></div>
+        </div>
+
+        <!-- 统计卡片 -->
+        <div class="stats-grid" id="statsGrid">
+            <div class="loading" style="grid-column:1/-1;"><div class="spinner"></div><br>加载统计数据中...</div>
+        </div>
+
+        <!-- 图表行 -->
+        <div class="charts-row">
+            <div class="chart-card">
+                <div class="chart-title">📊 各类别数量分布</div>
+                <div id="categoryChart"><div class="loading"><div class="spinner"></div></div></div>
+            </div>
+            <div class="chart-card">
+                <div class="chart-title">📋 审计结论分布</div>
+                <div id="conclusionChart"><div class="loading"><div class="spinner"></div></div></div>
+            </div>
+        </div>
+
+        <!-- 10大类卡片 -->
+        <div class="section-title">📂 10大凭证类别</div>
+        <div class="category-grid" id="categoryGrid">
+            <div class="loading" style="grid-column:1/-1;"><div class="spinner"></div><br>加载类别数据中...</div>
+        </div>
+
+        <!-- 风险分布 -->
+        <div class="charts-row">
+            <div class="chart-card">
+                <div class="chart-title">⚠️ 风险评级分布</div>
+                <div id="riskChart"><div class="loading"><div class="spinner"></div></div></div>
+            </div>
+            <div class="chart-card">
+                <div class="chart-title">📈 每日金额趋势（近30天）</div>
+                <div id="trendChart"><div class="loading"><div class="spinner"></div></div></div>
+            </div>
+        </div>
+
+        <div class="section-title">📄 凭证记录</div>
+        <div class="filter-bar">
+            <select id="filterCategory">
+                <option value="">全部分类</option>
+                <option value="发票类">发票类</option>
+                <option value="差旅票据类">差旅票据类</option>
+                <option value="银行/资金类">银行/资金类</option>
+                <option value="企业内部管理类">企业内部管理类</option>
+                <option value="税务类">税务类</option>
+                <option value="资产类">资产类</option>
+                <option value="合同/协议类">合同/协议类</option>
+                <option value="函证/审计类">函证/审计类</option>
+                <option value="证照/资质类">证照/资质类</option>
+                <option value="人事/薪酬类">人事/薪酬类</option>
+            </select>
+            <select id="filterRisk">
+                <option value="">全部风险</option>
+                <option value="高">高风险</option>
+                <option value="中">中风险</option>
+                <option value="低">低风险</option>
+            </select>
+            <input type="date" id="filterStartDate" title="开始日期">
+            <input type="date" id="filterEndDate" title="结束日期">
+            <button class="btn" onclick="loadRecords(1)">查询</button>
+            <button class="btn secondary" onclick="resetFilters()">重置</button>
+        </div>
+        <div class="table-container">
+            <div class="loading" id="recordsLoading"><div class="spinner"></div><br>加载记录中...</div>
+            <div id="recordsTable" style="display:none;">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>ID</th>
+                            <th>类别</th>
+                            <th>票据类型</th>
+                            <th>日期</th>
+                            <th>金额</th>
+                            <th>相关方</th>
+                            <th>风险</th>
+                            <th>审计结论</th>
+                            <th>操作</th>
+                        </tr>
+                    </thead>
+                    <tbody id="recordsBody"></tbody>
+                </table>
+                <div class="pagination" id="recordsPagination"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 详情弹窗 -->
+    <div class="modal-overlay" id="detailModal">
+        <div class="modal">
+            <button class="modal-close" onclick="closeDetail()">×</button>
+            <div class="modal-title" id="modalTitle">凭证详情</div>
+            <div id="modalBody"><div class="loading"><div class="spinner"></div></div></div>
+        </div>
+    </div>
+
+    <script>
+        const CATEGORIES = [
+            "发票类", "差旅票据类", "银行/资金类", "企业内部管理类",
+            "税务类", "资产类", "合同/协议类", "函证/审计类",
+            "证照/资质类", "人事/薪酬类"
+        ];
+        const CATEGORY_ICONS = {
+            "发票类": "🧾", "差旅票据类": "✈️", "银行/资金类": "🏦",
+            "企业内部管理类": "🏢", "税务类": "📋", "资产类": "🏠",
+            "合同/协议类": "📝", "函证/审计类": "🔍", "证照/资质类": "📜",
+            "人事/薪酬类": "👥"
+        };
+
+        let allStats = null;
+        let currentPage = 1;
+        let currentRecordData = null;
+        let chatHistory = [];
+        let currentRecordId = null;
+        let isStreaming = false;
+        let searchMode = 'vector';
+        let modelMode = 'default';
+
+        async function loadStats() {
+            try {
+                const res = await fetch('/api/audit/stats', { method: 'GET' });
+                allStats = await res.json();
+                renderStats();
+                renderComprehensive();
+                renderCategoryChart();
+                renderConclusionChart();
+                renderRiskChart();
+                renderTrendChart();
+                renderCategoryGrid();
+                loadRecords(1);
+            } catch(e) {
+                console.error('加载统计数据失败:', e);
+                document.getElementById('statsGrid').innerHTML = '<div class="error-msg">❌ 加载统计数据失败</div>';
+            }
+        }
+
+        function renderStats() {
+            const s = allStats;
+            if (!s) return;
+            const total = s.agent1_total || 0;
+            const catCount = Object.keys(s.categories || {}).length;
+            const riskDist = s.risk_distribution || {};
+            const highRisk = riskDist['高'] || 0;
+            const mediumRisk = riskDist['中'] || 0;
+            const lowRisk = riskDist['低'] || 0;
+            const dailyAmount = s.daily_amount || [];
+            const totalAmount = dailyAmount.reduce((sum, d) => sum + (d.amount || 0), 0);
+
+            document.getElementById('statsGrid').innerHTML = `
+                <div class="stat-card primary">
+                    <div class="label">📄 凭证总数</div>
+                    <div class="value">${total.toLocaleString()}</div>
+                    <div class="sub">Agent1 分类结果</div>
+                </div>
+                <div class="stat-card info">
+                    <div class="label">📂 类别数</div>
+                    <div class="value">${catCount}</div>
+                    <div class="sub">10大类别</div>
+                </div>
+                <div class="stat-card danger">
+                    <div class="label">🔴 高风险</div>
+                    <div class="value">${highRisk.toLocaleString()}</div>
+                    <div class="sub">需重点关注</div>
+                </div>
+                <div class="stat-card warning">
+                    <div class="label">🟡 中风险</div>
+                    <div class="value">${mediumRisk.toLocaleString()}</div>
+                    <div class="sub">需关注</div>
+                </div>
+                <div class="stat-card success">
+                    <div class="label">🟢 低风险</div>
+                    <div class="value">${lowRisk.toLocaleString()}</div>
+                    <div class="sub">正常</div>
+                </div>
+                <div class="stat-card primary">
+                    <div class="label">💰 总金额</div>
+                    <div class="value">¥${totalAmount.toLocaleString()}</div>
+                    <div class="sub">所有类别合计</div>
+                </div>
+            `;
+        }
+
+        function renderComprehensive() {
+            const s = allStats;
+            if (!s) return;
+            document.getElementById('compLoading').style.display = 'none';
+            const grid = document.getElementById('compGrid');
+            grid.style.display = 'grid';
+
+            const riskDist = s.risk_distribution || {};
+            const highRisk = riskDist['高'] || 0;
+            const mediumRisk = riskDist['中'] || 0;
+            const lowRisk = riskDist['低'] || 0;
+            const total = (highRisk + mediumRisk + lowRisk) || 1;
+            const highPct = ((highRisk / total) * 100).toFixed(1);
+            const passPct = s.conclusion_distribution ? (( (s.conclusion_distribution['通过'] || 0) / total) * 100).toFixed(1) : '0.0';
+
+            grid.innerHTML = `
+                <div class="comp-item">
+                    <div class="num">${s.agent1_total || 0}</div>
+                    <div class="lbl">总凭证数</div>
+                    <div class="sub">Agent1分类</div>
+                </div>
+                <div class="comp-item">
+                    <div class="num">${Object.keys(s.categories || {}).length}</div>
+                    <div class="lbl">类别覆盖</div>
+                    <div class="sub">10大类别</div>
+                </div>
+                <div class="comp-item">
+                    <div class="num">${highPct}%</div>
+                    <div class="lbl">高风险占比</div>
+                    <div class="sub">${highRisk}条</div>
+                </div>
+                <div class="comp-item">
+                    <div class="num">${passPct}%</div>
+                    <div class="lbl">通过率</div>
+                    <div class="sub">审计结论</div>
+                </div>
+                <div class="comp-item">
+                    <div class="num">${highRisk + mediumRisk}</div>
+                    <div class="lbl">需关注总数</div>
+                    <div class="sub">高+中风险</div>
+                </div>
+                <div class="comp-item">
+                    <div class="num">${s.daily_amount ? s.daily_amount.length : 0}</div>
+                    <div class="lbl">有数据天数</div>
+                    <div class="sub">近30天</div>
+                </div>
+            `;
+        }
+
+        function renderCategoryChart() {
+            const s = allStats;
+            if (!s || !s.categories) return;
+            const cats = s.categories;
+            const maxVal = Math.max(...Object.values(cats), 1);
+            const colors = ['#667eea', '#764ba2', '#f44336', '#ff9800', '#4caf50', '#2196f3', '#9c27b0', '#00bcd4', '#ff5722', '#795548'];
+            let html = '';
+            let idx = 0;
+            for (const [cat, count] of Object.entries(cats)) {
+                const pct = (count / maxVal * 100).toFixed(0);
+                const color = colors[idx % colors.length];
+                html += `<div class="chart-bar">
+                    <div class="bar-label">${CATEGORY_ICONS[cat] || '📄'} ${cat}</div>
+                    <div class="bar-track"><div class="bar-fill" style="width:${pct}%;background:${color};"></div></div>
+                    <div class="bar-value">${count.toLocaleString()}</div>
+                </div>`;
+                idx++;
+            }
+            document.getElementById('categoryChart').innerHTML = html;
+        }
+
+        function renderConclusionChart() {
+            const s = allStats;
+            if (!s || !s.conclusion_distribution) return;
+            const dist = s.conclusion_distribution;
+            document.getElementById('conclusionChart').innerHTML = `
+                <div class="conclusion-chart">
+                    <div class="conclusion-item passed">
+                        <div class="num">${dist['通过'] || 0}</div>
+                        <div class="lbl">✅ 通过</div>
+                    </div>
+                    <div class="conclusion-item failed">
+                        <div class="num">${dist['不通过'] || 0}</div>
+                        <div class="lbl">❌ 不通过</div>
+                    </div>
+                    <div class="conclusion-item manual">
+                        <div class="num">${dist['需人工'] || 0}</div>
+                        <div class="lbl">⚠️ 需人工</div>
+                    </div>
+                    <div class="conclusion-item unknown">
+                        <div class="num">${dist['未知'] || 0}</div>
+                        <div class="lbl">❓ 未知</div>
+                    </div>
+                </div>
+            `;
+        }
+
+        function renderRiskChart() {
+            const s = allStats;
+            if (!s || !s.risk_distribution) return;
+            const dist = s.risk_distribution;
+            const total = Object.values(dist).reduce((a, b) => a + b, 0) || 1;
+            const colors = { '高': '#f44336', '中': '#ff9800', '低': '#4caf50' };
+            let html = '';
+            for (const [level, count] of Object.entries(dist)) {
+                const pct = ((count / total) * 100).toFixed(1);
+                const color = colors[level] || '#999';
+                html += `<div class="chart-bar">
+                    <div class="bar-label">${level === '高' ? '🔴' : level === '中' ? '🟡' : '🟢'} ${level}</div>
+                    <div class="bar-track"><div class="bar-fill" style="width:${pct}%;background:${color};"></div></div>
+                    <div class="bar-value">${count.toLocaleString()} (${pct}%)</div>
+                </div>`;
+            }
+            document.getElementById('riskChart').innerHTML = html;
+        }
+
+        function renderTrendChart() {
+            const s = allStats;
+            if (!s || !s.daily_amount || s.daily_amount.length === 0) {
+                document.getElementById('trendChart').innerHTML = '<div class="empty-state"><div class="icon">📈</div><p>暂无趋势数据</p></div>';
+                return;
+            }
+            const data = s.daily_amount.slice(-30);
+            const maxVal = Math.max(...data.map(d => d.amount), 1);
+            const yMax = maxVal * 1.2;
+            const yLabels = [];
+            for (let i = 4; i >= 0; i--) {
+                yLabels.push(yMax * i / 4);
+            }
+            let html = '<div class="trend-chart"><div class="trend-yaxis">';
+            for (const v of yLabels) {
+                html += `<span>¥${(v / 10000).toFixed(0)}万</span>`;
+            }
+            html += '</div>';
+            for (const d of data) {
+                const pct = Math.max((d.amount / yMax) * 100, 2);
+                const dateStr = d.date ? d.date.substring(5) : '';
+                html += `<div class="trend-bar" style="height:${pct}%;" title="📈 ${d.date}: ¥${(d.amount / 10000).toFixed(1)}万">
+                    <div class="trend-hover-val">¥${(d.amount / 10000).toFixed(1)}万</div>
+                    <div class="trend-label">${dateStr}</div>
+                </div>`;
+            }
+            html += '</div>';
+            document.getElementById('trendChart').innerHTML = html;
+        }
+
+        function renderCategoryGrid() {
+            const s = allStats;
+            if (!s || !s.categories) return;
+            const cats = s.categories;
+            const riskDist = s.risk_distribution || {};
+            let html = '';
+            for (const cat of CATEGORIES) {
+                const count = cats[cat] || 0;
+                const icon = CATEGORY_ICONS[cat] || '📄';
+                html += `<div class="category-card" onclick="filterByCategory('${cat}')" style="border-left-color: ${getColor(cat)};">
+                    <div class="cat-name">${icon} ${cat}</div>
+                    <div class="cat-count">${count.toLocaleString()}</div>
+                    <div class="cat-risk">
+                        <span class="risk-badge high">高: ${getRiskCount(cat, '高')}</span>
+                        <span class="risk-badge medium">中: ${getRiskCount(cat, '中')}</span>
+                        <span class="risk-badge low">低: ${getRiskCount(cat, '低')}</span>
+                    </div>
+                </div>`;
+            }
+            document.getElementById('categoryGrid').innerHTML = html;
+        }
+
+        function getColor(cat) {
+            const colors = {
+                '发票类': '#667eea', '差旅票据类': '#764ba2', '银行/资金类': '#f44336',
+                '企业内部管理类': '#ff9800', '税务类': '#4caf50', '资产类': '#2196f3',
+                '合同/协议类': '#9c27b0', '函证/审计类': '#00bcd4', '证照/资质类': '#ff5722',
+                '人事/薪酬类': '#795548'
+            };
+            return colors[cat] || '#667eea';
+        }
+
+        function getRiskCount(cat, level) {
+            return allStats?.risk_distribution?.[level] || 0;
+        }
+
+        async function loadRecords(page) {
+            currentPage = page;
+            const category = document.getElementById('filterCategory').value;
+            const risk = document.getElementById('filterRisk').value;
+            const startDate = document.getElementById('filterStartDate').value;
+            const endDate = document.getElementById('filterEndDate').value;
+            document.getElementById('recordsLoading').style.display = 'block';
+            document.getElementById('recordsTable').style.display = 'none';
+            try {
+                const res = await fetch('/api/audit/list', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ category, risk_rating: risk, page, page_size: 15, start_date: startDate, end_date: endDate })
+                });
+                const data = await res.json();
+                document.getElementById('recordsLoading').style.display = 'none';
+                if (data.items && data.items.length > 0) {
+                    document.getElementById('recordsTable').style.display = 'block';
+                    renderRecordsTable(data.items);
+                    renderPagination(data.total, data.page, data.total_pages);
+                } else {
+                    document.getElementById('recordsTable').style.display = 'block';
+                    document.getElementById('recordsBody').innerHTML = '<tr><td colspan="9" style="text-align:center;padding:30px;color:#999;">暂无记录</td></tr>';
+                    document.getElementById('recordsPagination').innerHTML = '';
+                }
+            } catch (e) {
+                document.getElementById('recordsLoading').style.display = 'none';
+                document.getElementById('recordsTable').style.display = 'block';
+                document.getElementById('recordsBody').innerHTML = '<tr><td colspan="9" style="text-align:center;padding:30px;color:#f44336;">加载失败</td></tr>';
+            }
+        }
+
+        function renderRecordsTable(items) {
+            let html = '';
+            for (const item of items) {
+                const riskClass = item.risk_rating === '高' ? '高' : item.risk_rating === '中' ? '中' : '低';
+                const conclusionClass = item.audit_conclusion === '通过' ? '通过' : item.audit_conclusion === '不通过' ? '不通过' : '需人工';
+                html += `<tr onclick="showDetail(${item.id}, '${item.category}')">
+                    <td>${item.id}</td>
+                    <td>${item.category || '-'}</td>
+                    <td>${item.doc_type_name || '-'}</td>
+                    <td>${item.date || '-'}</td>
+                    <td>${item.amount ? '¥' + Number(item.amount).toFixed(2) : '-'}</td>
+                    <td>${item.party || '-'}</td>
+                    <td><span class="badge-risk ${riskClass}">${item.risk_rating || '未知'}</span></td>
+                    <td><span class="badge-conclusion ${conclusionClass}">${item.audit_conclusion || '未知'}</span></td>
+                    <td><button class="btn" style="padding:4px 10px;font-size:12px;" onclick="event.stopPropagation();showDetail(${item.id}, '${item.category}')">详情</button></td>
+                </tr>`;
+            }
+            document.getElementById('recordsBody').innerHTML = html;
+        }
+
+        function renderPagination(total, page, totalPages) {
+            const container = document.getElementById('recordsPagination');
+            if (totalPages <= 1) { container.innerHTML = ''; return; }
+            let html = '<span class="page-info">共' + total + '条</span>';
+            html += `<button ${page <= 1 ? 'disabled' : ''} onclick="loadRecords(1)">首页</button>`;
+            html += `<button ${page <= 1 ? 'disabled' : ''} onclick="loadRecords(${page - 1})">上一页</button>`;
+            let start = Math.max(1, page - 2);
+            let end = Math.min(totalPages, page + 2);
+            if (start > 1) {
+                html += `<button onclick="loadRecords(1)">1</button>`;
+                if (start > 2) html += '<span class="ellipsis">…</span>';
+            }
+            for (let i = start; i <= end; i++) {
+                html += `<button class="${i === page ? 'active' : ''}" onclick="loadRecords(${i})">${i}</button>`;
+            }
+            if (end < totalPages) {
+                if (end < totalPages - 1) html += '<span class="ellipsis">…</span>';
+                html += `<button onclick="loadRecords(${totalPages})">${totalPages}</button>`;
+            }
+            html += `<button ${page >= totalPages ? 'disabled' : ''} onclick="loadRecords(${page + 1})">下一页</button>`;
+            html += `<button ${page >= totalPages ? 'disabled' : ''} onclick="loadRecords(${totalPages})">尾页</button>`;
+            html += '<span class="page-info">第</span>';
+            html += `<input class="jump-input" id="jumpPageInput" type="number" min="1" max="${totalPages}" value="${page}" onkeydown="if(event.key==='Enter') jumpToPage()">`;
+            html += '<span class="page-info">页</span>';
+            html += `<button class="jump-btn" onclick="jumpToPage()">跳转</button>`;
+            container.innerHTML = html;
+        }
+
+        function jumpToPage() {
+            const input = document.getElementById('jumpPageInput');
+            let p = parseInt(input.value);
+            const totalPages = parseInt(input.max);
+            if (isNaN(p) || p < 1) p = 1;
+            if (p > totalPages) p = totalPages;
+            loadRecords(p);
+        }
+
+        function filterByCategory(cat) {
+            document.getElementById('filterCategory').value = cat;
+            loadRecords(1);
+        }
+
+        function resetFilters() {
+            document.getElementById('filterCategory').value = '';
+            document.getElementById('filterRisk').value = '';
+            document.getElementById('filterStartDate').value = '';
+            document.getElementById('filterEndDate').value = '';
+            loadRecords(1);
+        }
+
+        async function showDetail(id, category) {
+            document.getElementById('detailModal').classList.add('active');
+            document.getElementById('modalTitle').textContent = `凭证详情 #${id}`;
+            document.getElementById('modalBody').innerHTML = '<div class="loading"><div class="spinner"></div></div>';
+            try {
+                const res = await fetch('/api/audit/detail', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ id, category })
+                });
+                const data = await res.json();
+                if (data.error) {
+                    document.getElementById('modalBody').innerHTML = `<div class="error-msg">${data.error}</div>`;
+                    return;
+                }
+                let html = '<div class="detail-grid">';
+                html += `<div class="detail-item"><div class="label">类别</div><div class="value">${data.category || '-'}</div></div>`;
+                html += `<div class="detail-item"><div class="label">票据类型</div><div class="value">${data.doc_type_name || '-'}</div></div>`;
+                html += `<div class="detail-item"><div class="label">日期</div><div class="value">${data.f_date || data.date || '-'}</div></div>`;
+                html += `<div class="detail-item"><div class="label">金额</div><div class="value">${data.f_amount ? '¥' + Number(data.f_amount).toFixed(2) : '-'}</div></div>`;
+                html += `<div class="detail-item"><div class="label">相关方</div><div class="value">${data.f_party || data.party || '-'}</div></div>`;
+                html += `<div class="detail-item"><div class="label">风险评级</div><div class="value">${data.risk_rating || '-'}</div></div>`;
+                html += `<div class="detail-item"><div class="label">审计结论</div><div class="value">${data.audit_conclusion || '-'}</div></div>`;
+                html += `<div class="detail-item full"><div class="label">风险说明</div><div class="value">${data.risk_description || '-'}</div></div>`;
+                html += `<div class="detail-item full"><div class="label">审计说明</div><div class="value">${data.audit_reason || '-'}</div></div>`;
+                html += `<div class="detail-item full"><div class="label">摘要</div><div class="value">${data.summary || '-'}</div></div>`;
+                if (data.f_tax_id) html += `<div class="detail-item"><div class="label">税号</div><div class="value">${data.f_tax_id}</div></div>`;
+                if (data.f_serial_no) html += `<div class="detail-item"><div class="label">编号</div><div class="value">${data.f_serial_no}</div></div>`;
+                if (data.f_invoice_code) html += `<div class="detail-item"><div class="label">发票代码</div><div class="value">${data.f_invoice_code}</div></div>`;
+                if (data.f_invoice_no) html += `<div class="detail-item"><div class="label">发票号码</div><div class="value">${data.f_invoice_no}</div></div>`;
+                if (data.f_bank_info) html += `<div class="detail-item"><div class="label">银行信息</div><div class="value">${data.f_bank_info}</div></div>`;
+                if (data.f_tax_rate) html += `<div class="detail-item"><div class="label">税率</div><div class="value">${data.f_tax_rate}</div></div>`;
+                if (data.f_license_info) html += `<div class="detail-item full"><div class="label">证照信息</div><div class="value">${typeof data.f_license_info === 'object' ? JSON.stringify(data.f_license_info) : data.f_license_info}</div></div>`;
+                if (data.f_asset_info) html += `<div class="detail-item full"><div class="label">资产信息</div><div class="value">${typeof data.f_asset_info === 'object' ? JSON.stringify(data.f_asset_info) : data.f_asset_info}</div></div>`;
+                if (data.f_details) html += `<div class="detail-item full"><div class="label">详细信息</div><div class="value">${data.f_details}</div></div>`;
+                html += '</div>';
+                html += '<div class="detail-ai-section" id="detailAiSection">';
+                html += '<div class="ai-header"><span class="ai-icon">🎓</span> 智能审计辅导分析</div>';
+                html += '<div class="ai-subtitle">结合CPA知识库进行智能审计辅导</div>';
+                html += '<div class="ai-tools-bar">';
+                html += '<div class="mode-group"><span class="mode-label">检索模式</span>';
+                html += '<span class="mode-chip active" data-mode="vector" onclick="setSearchMode(this)">向量检索（语义）</span>';
+                html += '<span class="mode-chip" data-mode="bm25" onclick="setSearchMode(this)">BM25（关键词）</span>';
+                html += '<span class="mode-chip" data-mode="hybrid" onclick="setSearchMode(this)">混合检索</span>';
+                html += '<span class="mode-chip" data-mode="graph" onclick="setSearchMode(this)">知识图谱</span>';
+                html += '</div>';
+                html += '<div class="mode-group"><span class="mode-label">AI模型</span>';
+                html += '<select class="model-select" id="aiModelSelect"><option value="default">默认（当前配置）</option><option value="reason">推理模型</option></select>';
+                html += '</div>';
+                html += '</div>';
+                html += '<div class="ai-chat-container" id="aiChatContainer">';
+                html += '<div class="ai-chat-messages" id="aiChatMessages">';
+                html += '<div class="ai-placeholder"><div class="ai-placeholder-icon">🤖</div><p>点击下方按钮或输入问题开始审计辅导</p></div>';
+                html += '</div>';
+                html += '</div>';
+                html += '<div class="ai-input-row">';
+                html += '<input type="text" class="ai-input" id="aiQuestionInput" placeholder="输入你想问的问题（可选，留空则自动生成辅导分析）" onkeydown="if(event.key===\'Enter\' && !isStreaming) sendChatMessage()">';
+                html += '<button class="ai-btn" id="askAiBtn" onclick="sendChatMessage()">🎓 问问AI</button>';
+                html += '</div>';
+                html += '</div>';
+                document.getElementById('modalBody').innerHTML = html;
+                currentRecordData = data;
+                currentRecordId = id;
+                chatHistory = [];
+                searchMode = 'vector';
+                modelMode = document.getElementById('aiModelSelect').value;
+            } catch (e) {
+                document.getElementById('modalBody').innerHTML = '<div class="error-msg">加载详情失败</div>';
+            }
+        }
+
+        function closeDetail() {
+            document.getElementById('detailModal').classList.remove('active');
+        }
+
+        function setSearchMode(el) {
+            document.querySelectorAll('.mode-chip').forEach(function(c) { c.classList.remove('active'); });
+            el.classList.add('active');
+            searchMode = el.getAttribute('data-mode');
+        }
+
+        function sendChatMessage() {
+            const btn = document.getElementById('askAiBtn');
+            const questionInput = document.getElementById('aiQuestionInput');
+            const userQuestion = questionInput.value.trim();
+            if (isStreaming) return;
+            const messagesContainer = document.getElementById('aiChatMessages');
+            const placeholder = messagesContainer.querySelector('.ai-placeholder');
+            if (placeholder) placeholder.remove();
+            const d = currentRecordData;
+            if (!d) return;
+            if (userQuestion) {
+                addChatMessage('user', userQuestion);
+                chatHistory.push({ role: 'user', content: userQuestion });
+            }
+            const isFollowUp = chatHistory.length > 0 && chatHistory.some(function(m) { return m.role === 'assistant'; });
+            const loadingText = isFollowUp ? '<i class="fa fa-spinner fa-spin"></i> 思考中...' : '<i class="fa fa-spinner fa-spin"></i> 正在检索CPA知识库并生成分析...';
+            const loadingMsg = addChatMessage('assistant', loadingText, true);
+            btn.disabled = true;
+            isStreaming = true;
+            modelMode = document.getElementById('aiModelSelect').value;
+            const payload = {
+                id: currentRecordId,
+                image_type: d.doc_type_name || '',
+                risk_rating: d.risk_rating || '',
+                audit_conclusion: d.audit_conclusion || '',
+                risk_description: d.risk_description || '',
+                audit_reason: d.audit_reason || '',
+                total_amount: d.f_amount || '',
+                relevant_party: d.f_party || '',
+                date: d.f_date || '',
+                search_mode: searchMode,
+                model_mode: modelMode,
+                user_question: userQuestion,
+                history: chatHistory.slice(0, -1)
+            };
+            fetch('/api/audit_tutor_stream', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            }).then(function(response) {
+                const reader = response.body.getReader();
+                const decoder = new TextDecoder();
+                let buffer = '';
+                let fullAnswer = '';
+                let refsDisplayed = false;
+                function readChunk() {
+                    reader.read().then(function(result) {
+                        if (result.done) {
+                            btn.disabled = false;
+                            isStreaming = false;
+                            btn.innerHTML = '🎓 问问AI';
+                            questionInput.value = '';
+                            if (fullAnswer) {
+                                chatHistory.push({ role: 'assistant', content: fullAnswer });
+                            }
+                            return;
+                        }
+                        buffer += decoder.decode(result.value, { stream: true });
+                        let lines = buffer.split('\n');
+                        buffer = lines.pop() || '';
+                        for (let i = 0; i < lines.length; i++) {
+                            let trimmed = lines[i].trim();
+                            if (trimmed.startsWith('data: ')) {
+                                let jsonStr = trimmed.slice(6);
+                                try {
+                                    let event = JSON.parse(jsonStr);
+                                    if (event.type === 'meta' && event.cpa_referenced && !refsDisplayed) {
+                                        refsDisplayed = true;
+                                        addReferenceSection(event.cpa_referenced);
+                                    } else if (event.type === 'content') {
+                                        fullAnswer += event.content;
+                                        updateStreamingMessage(loadingMsg, fullAnswer);
+                                    } else if (event.type === 'error') {
+                                        updateStreamingMessage(loadingMsg, '**错误:** ' + event.content);
+                                        btn.disabled = false;
+                                        isStreaming = false;
+                                        btn.innerHTML = '🎓 问问AI';
+                                    }
+                                } catch (e) {}
+                            }
+                        }
+                        readChunk();
+                    }).catch(function(err) {
+                        btn.disabled = false;
+                        isStreaming = false;
+                        btn.innerHTML = '🎓 问问AI';
+                        if (!fullAnswer) {
+                            updateStreamingMessage(loadingMsg, '**请求失败:** ' + err.message);
+                        }
+                    });
+                }
+                readChunk();
+            }).catch(function(err) {
+                btn.disabled = false;
+                isStreaming = false;
+                btn.innerHTML = '🎓 问问AI';
+                updateStreamingMessage(loadingMsg, '**请求失败:** ' + err.message);
+            });
+        }
+
+        function addChatMessage(role, content, isStreaming) {
+            const container = document.getElementById('aiChatMessages');
+            const div = document.createElement('div');
+            div.className = 'ai-message ai-message-' + role;
+            const contentDiv = document.createElement('div');
+            contentDiv.className = 'ai-message-content';
+            if (role === 'assistant' && !isStreaming) {
+                try { contentDiv.innerHTML = marked.parse(content); } catch(e) { contentDiv.textContent = content; }
+            } else if (isStreaming) {
+                contentDiv.textContent = content;
+            } else {
+                contentDiv.textContent = content;
+            }
+            div.appendChild(contentDiv);
+            container.appendChild(div);
+            container.scrollTop = container.scrollHeight;
+            return contentDiv;
+        }
+
+        function updateStreamingMessage(element, fullContent) {
+            try { element.innerHTML = marked.parse(fullContent); } catch(e) { element.textContent = fullContent; }
+            const container = document.getElementById('aiChatMessages');
+            container.scrollTop = container.scrollHeight;
+        }
+
+        function addReferenceSection(refs) {
+            if (!refs || refs.length === 0) return;
+            const container = document.getElementById('aiChatMessages');
+            const refDiv = document.createElement('div');
+            refDiv.className = 'ai-reference-section';
+            let html = '<div class="ref-title">📚 参考知识来源</div>';
+            for (let i = 0; i < refs.length; i++) {
+                const r = refs[i];
+                html += '<div class="ref-item"><span class="ref-badge">#' + (i + 1) + '</span> <span>' + (r.source_label || '来源') + ' <span class="ref-sim">(' + (r.similarity * 100).toFixed(0) + '%)</span></div>';
+            }
+            refDiv.innerHTML = html;
+            container.appendChild(refDiv);
+            container.scrollTop = container.scrollHeight;
+        }
+
+        document.addEventListener('DOMContentLoaded', loadStats);
+    </script>
+</body>
+</html>

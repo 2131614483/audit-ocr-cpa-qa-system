@@ -1,0 +1,40 @@
+{
+  "version": "1.0",
+  "description": "CPA知识图谱抽取专用Prompt模板 — 独立于 prompts_config.json",
+
+  "entity_extraction": {
+    "name": "CPA知识图谱实体抽取",
+    "model": "deepseek-chat",
+    "temperature": 0.1,
+    "max_tokens": 3000,
+    "system_prompt": "你是一位CPA(注册会计师)知识图谱构建专家。你的任务是从CPA教材内容中精确提取知识实体。你精通会计、审计、税法、财务成本管理、经济法、公司战略与风险管理全部六科。",
+    "user_prompt_template": "从以下CPA教材片段中提取所有有意义的知识实体。\n\n## 实体类型（必须严格使用以下类型之一）\n- Concept: 会计概念、审计术语、财管方法、法律概念、战略框架\n- Standard: 企业会计准则、审计准则、税法条文、法律法规的具体条款号\n- Formula: 计算公式、分录模板、计算模型\n- TaxItem: 税目、税率、税收优惠政策\n- Question: 典型考题、案例题涉及的核心考点\n\n## 提取要求\n1. 每个实体必须有清晰的定义（10-50字）\n2. category字段标注所属领域：资产类/负债类/收入类/审计程序/税目税率/财管公式/经济法条/战略框架/其他\n3. chapter_ref标注章节信息\n4. 忽略过于宽泛的概念（如\"会计\"、\"财务报表\"这种一级概念）\n5. 只提取这段内容中实际出现的实体，不要推测\n\n## 教材内容\n{chunk_text}\n\n## 章节信息\n{chapter_info}\n\n## 输出格式（严格JSON，不要其他文字）\n{\n  \"entities\": [\n    {\n      \"name\": \"长期股权投资的成本法\",\n      \"entity_type\": \"Concept\",\n      \"category\": \"资产类\",\n      \"definition\": \"投资方对被投资单位实施控制时，按初始投资成本计量，不随被投资单位净资产变动而调整的方法\",\n      \"chapter_ref\": \"会计 > 第5章 长期股权投资\",\n      \"importance\": \"高\"\n    }\n  ]\n}"
+  },
+
+  "relation_extraction": {
+    "name": "CPA知识图谱关系抽取",
+    "model": "deepseek-chat",
+    "temperature": 0.1,
+    "max_tokens": 4000,
+    "system_prompt": "你是一位CPA(注册会计师)知识图谱构建专家。你的任务是判断CPA知识实体之间的关系。",
+    "user_prompt_template": "已知以下实体（来自同一教材片段）：\n{entities_json}\n\n## 教材内容\n{chunk_text}\n\n## 关系类型（必须严格使用以下类型之一）\n- derives_from: A的计算依赖B，或A的值由B推导而来（如\"营业利润 derives_from 营业收入\"）\n- references: A引用了准则/法条B（如\"存货计量 references 企业会计准则第1号\"）\n- contrasts_with: A与B是易混概念，需要对比区分（如\"成本法 contrasts_with 权益法\"）\n- prerequisite_of: 学B之前必须先懂A（如\"复式记账 prerequisite_of 合并报表\"）\n- composes: A由B1,B2,B3等组成（如\"现金流量表 composes 经营活动现金流\"）\n- leads_to: A的变动会导致B变动（如\"资产减值损失 leads_to 递延所得税资产\"）\n- belongs_to: A属于章节B（如\"存货跌价准备 belongs_to 第2章 存货\"）\n\n## 要求\n1. 只输出这段内容中确实存在的关系，不要推测\n2. 如果有公式，填入formula字段\n3. 每个关系给出置信度(0.0-1.0)\n4. 描述至少20字，说明关系的具体含义\n\n## 输出格式（严格JSON）\n{\n  \"relationships\": [\n    {\n      \"source\": \"资产减值损失\",\n      \"target\": \"可抵扣暂时性差异\",\n      \"relation_type\": \"leads_to\",\n      \"description\": \"计提资产减值损失会使会计利润低于应税利润，产生可抵扣暂时性差异\",\n      \"formula\": \"可抵扣暂时性差异 = 账面价值 - 计税基础\",\n      \"confidence\": 0.9\n    }\n  ]\n}"
+  },
+
+  "formula_extraction": {
+    "name": "CPA公式与分录抽取",
+    "model": "deepseek-chat",
+    "temperature": 0.1,
+    "max_tokens": 3000,
+    "system_prompt": "你是一位CPA(注册会计师)知识图谱构建专家。你的任务是从CPA教材中精确提取计算公式和会计分录模板。",
+    "user_prompt_template": "从以下CPA教材片段中提取所有计算公式和会计分录。\n\n## 教材内容\n{chunk_text}\n\n## 章节信息\n{chapter_info}\n\n## 要求\n1. 提取所有明确的计算公式（含表达式）\n2. 提取会计分录模板（如\"借：XX 贷：XX\"）\n3. 每个公式标注输入变量和输出结果\n4. 标注适用条件\n5. 如有计算示例，提取到example字段\n\n## 输出格式（严格JSON）\n{\n  \"formulas\": [\n    {\n      \"name\": \"递延所得税资产计算\",\n      \"expression\": \"递延所得税资产 = 可抵扣暂时性差异 × 适用税率\",\n      \"inputs\": [\"可抵扣暂时性差异\", \"适用税率\"],\n      \"output\": \"递延所得税资产\",\n      \"conditions\": \"预期未来有足够应纳税所得额\",\n      \"example\": \"某企业可抵扣暂时性差异100万元，税率25%，则递延所得税资产=25万元\"\n    }\n  ]\n}"
+  },
+
+  "confusion_detection": {
+    "name": "CPA易混概念识别",
+    "model": "deepseek-chat",
+    "temperature": 0.1,
+    "max_tokens": 3000,
+    "system_prompt": "你是一位CPA(注册会计师)考试辅导专家。你的任务是识别CPA考试中常见的易混概念对/组。",
+    "user_prompt_template": "已知以下实体：\n{entities_json}\n\n## 教材内容\n{chunk_text}\n\n## 要求\n1. 识别这段内容中容易混淆的概念对\n2. 每对概念给出明确的区分要点（50-100字）\n3. 给出典型使用场景\n4. 如有典型考题，写入typical_question字段\n5. 只输出确实容易混淆的，相似但不会混淆的不要输出\n\n## 输出格式（严格JSON）\n{\n  \"confusion_pairs\": [\n    {\n      \"concept_a\": \"资本化支出\",\n      \"concept_b\": \"费用化支出\",\n      \"distinction\": \"资本化支出计入资产成本，分期摊销影响损益；费用化支出直接计入当期损益。判断标准：是否增加资产未来经济利益。\",\n      \"scenario_a\": \"固定资产改良支出、无形资产开发阶段满足资本化条件的支出\",\n      \"scenario_b\": \"日常修理费、研究阶段支出、广告费\",\n      \"typical_question\": \"下列固定资产后续支出中，应当资本化的是？\"\n    }\n  ]\n}"
+  }
+}

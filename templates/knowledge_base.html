@@ -1,0 +1,103 @@
+{% extends "base.html" %}
+{% set active = 'knowledge_base' %}
+{% block title %}审计知识库 · 审计CPA综合系统{% endblock %}
+{% block page_title %}📖 审计知识库{% endblock %}
+
+{% block content %}
+<div class="card">
+  <div class="card-header">
+    <span>知识库规则列表</span>
+    <div class="flex gap-8">
+      <input class="form-control" id="search-input" placeholder="搜索规则名称…（回车搜索）" style="width:240px" onkeydown="if(event.key==='Enter')searchRecords()">
+      <button class="btn btn-outline" onclick="searchRecords()">🔍 搜索</button>
+      <button class="btn btn-ghost" onclick="refreshData()">⟳</button>
+    </div>
+  </div>
+  <div class="table-wrap">
+    <table class="tbl">
+      <thead><tr><th>规则编号</th><th>规则名称</th><th>分类</th><th>风险等级</th><th>创建时间</th></tr></thead>
+      <tbody id="kb-table-body"><tr><td colspan="5" class="tbl-empty">加载中…</td></tr></tbody>
+    </table>
+  </div>
+  <div class="card-body" id="pagination" style="padding:12px 16px"></div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+let kbData = [];
+let currentPage = 1;
+const pageSize = 10;
+let searchKeyword = '';
+
+document.addEventListener('DOMContentLoaded', function () {
+  loadKnowledgeBase();
+});
+
+function loadKnowledgeBase() {
+  fetch('/api/all_knowledge_base').then(r => r.json()).then(data => {
+    kbData = data;
+    renderTable();
+    updatePagination();
+  }).catch(e => console.error('加载知识库失败:', e));
+}
+
+function getFiltered() {
+  if (!searchKeyword) return kbData;
+  return kbData.filter(item => item.rule_name && item.rule_name.toLowerCase().includes(searchKeyword.toLowerCase()));
+}
+
+function renderTable() {
+  const filtered = getFiltered();
+  const start = (currentPage - 1) * pageSize;
+  const pageData = filtered.slice(start, start + pageSize);
+  const tbody = document.getElementById('kb-table-body');
+  if (!pageData.length) { tbody.innerHTML = '<tr><td colspan="5" class="tbl-empty">暂无数据</td></tr>'; return; }
+  tbody.innerHTML = pageData.map(item => {
+    const cls = item.risk_level === '高风险' ? 'badge-high' : item.risk_level === '中风险' ? 'badge-medium' : 'badge-low';
+    return `<tr style="cursor:pointer" onclick="showKBDetail(${item.id})">
+      <td>${escapeHtml(item.rule_id) || '-'}</td>
+      <td>${escapeHtml(item.rule_name) || '-'}</td>
+      <td>${escapeHtml(item.category) || '-'}</td>
+      <td><span class="badge ${cls}">${escapeHtml(item.risk_level) || '-'}</span></td>
+      <td>${escapeHtml(item.created_at) || '-'}</td></tr>`;
+  }).join('');
+}
+
+function updatePagination() {
+  const filtered = getFiltered();
+  const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
+  if (currentPage > totalPages) currentPage = totalPages;
+  renderPagination(document.getElementById('pagination'), {
+    page: currentPage, totalPages, total: filtered.length, pageSize,
+    onPage: p => { currentPage = p; renderTable(); updatePagination(); }
+  });
+}
+
+function searchRecords() {
+  searchKeyword = document.getElementById('search-input').value;
+  currentPage = 1;
+  renderTable();
+  updatePagination();
+}
+
+function showKBDetail(kbId) {
+  openModal({ title: '知识库规则详情', body: '<div class="empty-state">加载中…</div>' });
+  fetch('/api/knowledge_base/' + kbId).then(r => r.json()).then(data => {
+    const cls = data.risk_level === '高风险' ? 'badge-high' : data.risk_level === '中风险' ? 'badge-medium' : 'badge-low';
+    modalBody(`
+      <div class="detail-item mb-8"><div class="k">规则名称</div><div class="v">${escapeHtml(data.rule_name) || '-'}</div></div>
+      <div class="detail-grid mb-16">
+        <div class="detail-item"><div class="k">规则编号</div><div class="v">${escapeHtml(data.rule_id) || '-'}</div></div>
+        <div class="detail-item"><div class="k">分类</div><div class="v">${escapeHtml(data.category) || '-'}</div></div>
+        <div class="detail-item"><div class="k">风险等级</div><div class="v"><span class="badge ${cls}">${escapeHtml(data.risk_level) || '-'}</span></div></div>
+      </div>
+      <div class="text-2 mb-8" style="font-size:13px">规则内容</div>
+      <div class="result-item">${escapeHtml(data.content) || '-'}</div>
+      <div class="text-3 mt-16" style="font-size:12px">创建时间: ${escapeHtml(data.created_at) || '-'}</div>`);
+  }).catch(e => modalBody('<div class="empty-state">加载失败</div>'));
+}
+
+function refreshData() { loadKnowledgeBase(); }
+</script>
+{% endblock %}

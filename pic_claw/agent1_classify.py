@@ -1,0 +1,396 @@
+# 控制台输出强制 UTF-8（Windows GBK 控制台无法打印 emoji，会导致启动崩溃）
+import sys as _s
+if hasattr(_s.stdout, 'reconfigure'):
+    _s.stdout.reconfigure(encoding='utf-8', errors='replace')
+    _s.stderr.reconfigure(encoding='utf-8', errors='replace')
+import os
+import sys
+import json
+import re
+import time
+import base64
+from pathlib import Path
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import datetime
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from pic_claw.pipeline_db import (
+    get_pending_classify_images, update_classify_result,
+    insert_agent_log, insert_pipeline_log, get_batch,
+    update_batch_progress, get_classify_stats, get_all_document_types
+)
+from services.ollama_client import call_llm, get_main_model
+
+MAX_WORKERS = 5
+BATCH_SIZE = 50
+
+CATEGORY_GROUPS = [
+    ("发票类", [
+        ("增值税专用发票", "三联/两联式，有'发票联''抵扣联''记账联'，含密码区、购销双方信息、税率17%/13%/9%/6%"),
+        ("增值税普通发票", "两联式，有'发票联''记账联'，无抵扣联，含购销双方信息、税率"),
+        ("增值税电子普通发票", "电子版式(OFD/PDF)，无纸质联次，有二维码和电子发票章，含购销双方信息"),
+        ("增值税电子专用发票", "电子版式(OFD)，有'增值税电子专用发票'字样，含密码区、购销双方信息"),
+        ("全电发票", "全面数字化电子发票，无联次概念，XML/PDF格式，有动态二维码，无'发票专用章'"),
+        ("定额发票", "固定面额(1/2/5/10/50/100元)，无金额填写栏，薄纸单张，有奖刮开区"),
+        ("通用机打发票", "针式打印机打印在带孔连续纸上，无密码区，含购销双方信息"),
+        ("红字发票", "红色字体或负数金额标注，用于冲红/退货，有'红字'或'负数'字样"),
+        ("机动车销售发票", "六联式，有'机动车销售统一发票'字样，含车架号/VIN码、发动机号、车辆型号"),
+        ("二手车销售发票", "有'二手车销售统一发票'字样，含车辆信息、成交价格"),
+        ("农产品收购发票", "有'农产品收购发票'字样，收购方为买方(企业)，含农产品名称、数量"),
+        ("服务业发票", "有'服务业发票'或'服务费发票'字样，列明服务项目明细"),
+        ("建筑安装业发票", "有'建筑安装业发票'字样，含工程名称、项目地址"),
+        ("交通运输业发票", "有'交通运输业发票'字样，含运输货物信息、起运地目的地"),
+        ("餐饮发票", "有'餐饮发票'字样，含消费明细、餐费金额"),
+        ("住宿发票", "有'住宿发票'字样，含入住/离店日期、房费明细"),
+        ("物业费发票", "有'物业费发票'字样，含物业公司信息、收费期间"),
+        ("水电费发票", "有'水电费发票'字样，含表号、起止度数、单价"),
+        ("通信费发票", "有'通信费发票'或'话费发票'字样，含电话号码、套餐明细"),
+        ("保险费发票", "有'保险费发票'字样，含保单号、险种名称、保费金额"),
+    ]),
+    ("差旅票据类", [
+        ("航空运输电子客票", "蓝色/粉色行程单，有'航空运输电子客票行程单'字样，含航班号、姓名、票价、民航发展基金"),
+        ("铁路车票", "红色/蓝色磁卡车票，有车次、座位号、出发站/到达站、票价、乘车日期"),
+        ("出租车发票", "卷式热敏小票，有车牌号、日期时间、里程数、金额、公司名称"),
+        ("过路费发票", "高速公路通行费发票，有入口/出口站名、车型、收费金额、通行日期"),
+        ("停车费发票", "停车收费小票，有车牌号、入场/出场时间、停车时长、收费金额"),
+        ("航空运输货运单", "航空货运单(AWB)，有运单号、货物品名、重量、件数、始发/目的站"),
+        ("船票", "水路客运票，有船名、航次、出发港/到达港、开船时间、票价"),
+        ("汽车客运票", "公路客运票，有班次号、出发站/到达站、发车时间、票价、座位号"),
+    ]),
+    ("银行/资金类", [
+        ("银行回单", "银行电子回单(可带电子印章)，单笔交易，有交易流水号、金额、收付款方账号"),
+        ("银行对账单", "多行交易明细列表，有日期、摘要、借贷方金额、余额，加盖银行印章"),
+        ("银行进账单", "有'进账单'字样，收款人信息完整，有大写金额栏，银行盖章确认"),
+        ("电汇凭证", "有'电汇凭证'字样，汇款人/收款人信息，汇款金额大写，银行盖章"),
+        ("银行承兑汇票", "有'银行承兑汇票'字样，大额票据，有承兑行信息、到期日，带防伪水印"),
+        ("商业承兑汇票", "有'商业承兑汇票'字样，企业承兑而非银行承兑，有出票人/收款人信息"),
+        ("转账支票", "有'转账支票'字样，无'现金付讫'章，有收款人、金额、用途栏"),
+        ("现金支票", "有'现金支票'字样，有'现金付讫'章，凭票付款，有收款人(通常为本单位)"),
+        ("利息单", "银行利息回单，有计息起止日期、利率、利息金额、本金"),
+        ("手续费回单", "银行扣费凭证，有手续费金额、收费项目名称、扣费账户"),
+        ("信用证", "有'信用证'或'L/C'字样，跟单信用证格式，含开证行、受益人、金额、有效期"),
+        ("保函", "有'保函'或'担保函'字样，银行担保函格式，含被担保人、受益人、担保金额"),
+        ("贴现凭证", "有'贴现凭证'字样，含票据信息、贴现利率、贴现利息、实付金额"),
+        ("贷款借据", "有'借款借据'字样，含借款人、贷款金额、期限、利率、还款方式"),
+        ("还款凭证", "有'还款凭证'字样，含还款金额、剩余本金、还款日期"),
+        ("结汇水单", "有'结汇水单'字样，含外币币种、汇率、结汇金额、人民币金额"),
+        ("国际汇款申请书", "有'国际汇款申请书'字样，含汇款币种、金额、收款人境外账户信息"),
+        ("现金缴款单", "有'现金缴款单'字样，含缴款单位、账号、金额大写、款项来源"),
+    ]),
+    ("函证/审计类", [
+        ("银行询证函", "有'银行询证函'字样，致银行，含账户余额、贷款等信息，银行回函栏"),
+        ("企业询证函", "有'企业询证函'字样，企业间往来对账，含应收/应付余额"),
+        ("应收账款询证函", "有'应收账款询证函'字样，针对应收账款余额的函证"),
+        ("应付账款询证函", "有'应付账款询证函'字样，针对应付账款余额的函证"),
+        ("存货询证函", "有'存货询证函'字样，针对库存余额的函证"),
+        ("对账函", "有'对账函'字样，企业间往来对账，含双方确认签章栏"),
+        ("催款函", "有'催款函'或'催收通知'字样，含欠款金额、付款期限、逾期后果"),
+        ("审计报告", "有'审计报告'字样，标准格式，含审计意见段、注册会计师签章"),
+        ("验资报告", "有'验资报告'字样，含注册资本、实收资本、出资方式、验资事项"),
+        ("审计工作底稿", "有'审计工作底稿'字样，含审计程序、索引号、审计结论"),
+        ("审计业务约定书", "有'审计业务约定书'字样，委托方/受托方信息，审计范围、费用"),
+        ("管理层声明书", "有'管理层声明书'字样，管理层对财务报表责任的声明"),
+        ("专项审计报告", "有'专项审计报告'字样，针对特定项目的审计报告"),
+        ("内部控制审计报告", "有'内部控制审计报告'字样，针对内控有效性的评价报告"),
+    ]),
+    ("税务类", [
+        ("完税凭证", "有'税收完税证明'字样，税务局电子/纸质印章，含税种、税款金额、所属期"),
+        ("海关进口增值税缴款书", "有'海关进口增值税专用缴款书'字样，含海关编号、进口口岸、完税价格"),
+        ("非税收入票据", "有'非税收入统一票据'字样，含执收单位、项目名称、金额"),
+        ("税收缴款书", "有'税收缴款书'字样，含纳税人信息、税种、税款所属期、缴款期限"),
+        ("纳税申报表", "有'纳税申报表'字样，多行表格，含申报类型、税款计算、减免明细"),
+        ("个人所得税纳税记录", "有'个人所得税纳税记录'字样，含纳税人姓名、收入额、已缴税额"),
+        ("增值税发票汇总表", "有'增值税发票汇总表'字样，含进项/销项汇总、份数、金额、税额"),
+        ("出口退税申报表", "有'出口退税申报表'字样，含出口货物信息、退税率、应退税额"),
+        ("税务登记证", "有'税务登记证'字样，含纳税人识别号、法定代表人、经营范围"),
+        ("税务事项通知书", "有'税务事项通知书'字样，税务局发文，含通知事项、处理决定"),
+        ("企业所得税汇算清缴", "有'企业所得税汇算清缴'字样，含应纳税所得额调整、应补/退税额"),
+        ("印花税票", "有'印花税票'字样，邮票式小额税票，有面值金额"),
+        ("房产税申报表", "有'房产税申报表'字样，含房产原值、税率、应纳税额"),
+        ("车辆购置税发票", "有'车辆购置税'字样，含车辆信息、计税价格、税率10%"),
+    ]),
+    ("企业内部管理类", [
+        ("费用报销单", "有'费用报销单'字样，含报销部门、报销人、费用明细、审批签字栏"),
+        ("差旅费报销单", "有'差旅费报销单'字样，含出差人、起止日期、交通/住宿/补助明细"),
+        ("付款申请单", "有'付款申请单'字样，含收款方、付款金额、付款方式、审批流程"),
+        ("借款单", "有'借款单'或'借条'字样，含借款人、借款金额、预计还款日期"),
+        ("入库单", "有'入库单'字样，含入库日期、货物名称、数量、单价、供应商"),
+        ("出库单", "有'出库单'或'领料单'字样，含出库日期、货物名称、数量、领用部门"),
+        ("调拨单", "有'调拨单'字样，含调出/调入部门、物资明细、调拨原因"),
+        ("盘点表", "有'盘点表'字样，含存货/资产名称、账面数、实盘数、差异"),
+        ("现金盘点表", "有'现金盘点表'字样，含币种、面额张数、实盘金额、差异"),
+        ("银行存款余额调节表", "有'银行存款余额调节表'字样，两侧列银行对账单余额和企业账面余额，含调节项目"),
+        ("内部转账单", "有'内部转账单'字样，含转出/转入部门、金额、事由"),
+        ("出差申请单", "有'出差申请单'字样，含出差人、目的地、起止日期、预算"),
+        ("采购申请单", "有'采购申请单'字样，含申请人、物品名称、规格、数量、预算"),
+        ("验收单", "有'验收单'字样，含验收人、物品名称、规格、数量、验收结论"),
+        ("送货单", "有'送货单'或'签收单'字样，含送货方、收货方、货物明细、签收栏"),
+        ("比价单", "有'比价单'字样，含采购物品、多家供应商报价对比、推荐意见"),
+    ]),
+    ("薪酬/人事/合同类", [
+        ("工资单", "有'工资单'或'工资表'字样，含姓名、基本工资、津贴、扣款、实发金额"),
+        ("劳务费发放表", "有'劳务费发放表'字样，含劳务人员姓名、身份证号、劳务金额、个税"),
+        ("社保缴费凭证", "有'社会保险'字样，社保局印章，含单位/个人缴费基数、各险种金额"),
+        ("公积金缴存凭证", "有'住房公积金'字样，公积金中心印章，含单位/个人缴存比例、金额"),
+        ("考勤表", "有'考勤表'字样，含员工姓名、日期、出勤/缺勤/请假标记"),
+        ("年终奖金表", "有'年终奖金'字样，含员工姓名、奖金基数、考核系数、实发金额"),
+        ("加班工资表", "有'加班工资'字样，含加班人、加班日期、加班时长、加班费计算"),
+        ("劳动合同", "有'劳动合同'字样，多页文本，含合同期限、岗位、薪酬、双方签章"),
+        ("劳务合同", "有'劳务合同'字样，含劳务内容、报酬、期限、双方签章"),
+        ("福利费发放表", "有'福利费'字样，含员工姓名、福利项目、金额、签收栏"),
+    ]),
+    ("账簿/分录/报表类", [
+        ("记账凭证", "有'记账凭证'字样，含会计分录(借/贷科目)、金额、附件张数、制单人"),
+        ("原始凭证", "有'原始凭证'字样，作为记账依据的原始单据，含经办人签章"),
+        ("收款凭证", "有'收款凭证'字样，借方为现金/银行存款，贷方为对应科目"),
+        ("付款凭证", "有'付款凭证'字样，贷方为现金/银行存款，借方为对应科目"),
+        ("转账凭证", "有'转账凭证'字样，不涉及现金/银行存款的转账业务"),
+        ("总账", "有'总分类账'或'总账'字样，科目汇总，含期初余额、本期发生额、期末余额"),
+        ("明细账", "有'明细分类账'或'明细账'字样，多行明细记录，含日期、摘要、借贷方"),
+        ("日记账", "有'日记账'字样，逐日逐笔记录，含日期、凭证号、摘要、借贷方、余额"),
+        ("资产负债表", "有'资产负债表'字样，资产=负债+所有者权益，含流动资产/非流动资产"),
+        ("利润表", "有'利润表'字样，收入-费用=利润，含营业收入、营业成本、各项费用"),
+        ("现金流量表", "有'现金流量表'字样，含经营活动/投资活动/筹资活动现金流"),
+        ("所有者权益变动表", "有'所有者权益变动表'字样，含实收资本、资本公积、盈余公积、未分配利润变动"),
+    ]),
+    ("固定资产/成本类", [
+        ("固定资产卡片", "有'固定资产卡片'字样，含资产编号、名称、原值、折旧方法、使用部门"),
+        ("固定资产报废单", "有'固定资产报废单'字样，含报废资产信息、报废原因、审批意见"),
+        ("折旧计算表", "有'折旧计算表'字样，含资产原值、残值率、折旧年限、月/年折旧额"),
+        ("成本计算单", "有'成本计算单'字样，含直接材料、直接人工、制造费用、完工成本"),
+        ("材料领用单", "有'材料领用单'或'领料单'字样，含材料名称、规格、数量、用途"),
+        ("固定资产调拨单", "有'固定资产调拨单'字样，含调出/调入部门、资产明细、调拨原因"),
+        ("固定资产增加单", "有'固定资产增加单'字样，含新增资产信息、来源、价值、入账日期"),
+        ("无形资产台账", "有'无形资产台账'字样，含无形资产名称、原值、摊销方法、剩余期限"),
+    ]),
+    ("收据/合同/资质类", [
+        ("收据", "有'收据'字样，非发票类收款凭证，含交款人、金额、收款事由、收款人签章"),
+        ("捐赠收据", "有'捐赠收据'或'公益事业捐赠票据'字样，含捐赠人、捐赠金额、公益项目"),
+        ("会费收据", "有'会费收据'字样，含会员单位/个人、会费年度、金额"),
+        ("购销合同", "有'购销合同'字样，含买卖双方、货物名称、数量、单价、总价、交货期"),
+        ("租赁合同", "有'租赁合同'字样，含出租/承租方、租赁物、租期、租金、押金"),
+        ("营业执照", "有'营业执照'字样，含统一社会信用代码、公司名称、法定代表人、经营范围"),
+        ("开户许可证", "有'开户许可证'字样，含开户银行、账号、单位名称、人民银行盖章"),
+        ("组织机构代码证", "有'组织机构代码证'字样，含组织机构代码、机构名称、有效期"),
+        ("医疗收费票据", "有'医疗收费票据'字样，含医院名称、患者姓名、诊疗项目、金额"),
+        ("诉讼费票据", "有'诉讼费票据'字样，含法院名称、案号、诉讼费金额"),
+    ]),
+]
+
+ALL_TYPE_NAMES = []
+for _, types in CATEGORY_GROUPS:
+    for t in types:
+        ALL_TYPE_NAMES.append(t[0] if isinstance(t, tuple) else t)
+
+TYPE_TO_CATEGORY = {}
+for cat_name, types in CATEGORY_GROUPS:
+    for t in types:
+        name = t[0] if isinstance(t, tuple) else t
+        TYPE_TO_CATEGORY[name] = cat_name
+
+
+def build_classify_prompt():
+    lines = [
+        "你是一位专业的审计凭证分类专家。请根据图片的视觉特征（布局、标题文字、表格结构、印章等），",
+        "从以下130种凭证类型中选择最匹配的一种。",
+        "注意区分外观相似的凭证（如：银行存款余额调节表两侧列示调节项目，日记账是逐日流水记录；",
+        "记账凭证有借贷分录，原始凭证是原始单据；银行回单是单笔交易，对账单是多笔列表）。",
+        "",
+        "每种凭证附有区分特征描述，请仔细比对：",
+        ""
+    ]
+    for cat_name, types in CATEGORY_GROUPS:
+        lines.append(f"【{cat_name}】")
+        for t in types:
+            name, desc = t
+            lines.append(f"  - {name}：{desc}")
+    category_list = "\n".join(lines)
+
+    prompt = f"""{category_list}
+
+请严格按照以下JSON格式输出（不要包含任何其他文字）：
+{{
+    "type_name": "最匹配的凭证类型名称（必须从上面列表中选择）",
+    "category_name": "所属大类名称",
+    "confidence": 0.95,
+    "reasoning": "简要说明分类依据（20字以内）"
+}}"""
+    return prompt
+
+
+def image_to_base64(filepath: str) -> str:
+    with open(filepath, "rb") as f:
+        return base64.b64encode(f.read()).decode("utf-8")
+
+
+def fuzzy_match_type(raw_name: str) -> str:
+    raw_clean = raw_name.strip().replace(" ", "").replace("\t", "")
+    for t in ALL_TYPE_NAMES:
+        if t == raw_clean:
+            return t
+    for t in ALL_TYPE_NAMES:
+        if t in raw_clean or raw_clean in t:
+            return t
+    for t in ALL_TYPE_NAMES:
+        if len(set(t) & set(raw_clean)) / max(len(set(t)), len(set(raw_clean)), 1) > 0.6:
+            return t
+    return None
+
+
+def classify_single_image(image_id: int, file_path: str, file_name: str) -> dict:
+    start_time = time.time()
+    model_name = get_main_model()
+
+    try:
+        image_b64 = image_to_base64(file_path)
+        prompt = build_classify_prompt()
+        raw_response = call_llm(prompt, model_key="main", image_base64=image_b64)
+        duration_ms = int((time.time() - start_time) * 1000)
+
+        json_str = raw_response.strip()
+        json_str = re.sub(r"^```(?:json)?\s*", "", json_str)
+        json_str = re.sub(r"\s*```$", "", json_str)
+        result = json.loads(json_str)
+
+        type_name = result.get("type_name", "")
+        category_name = result.get("category_name", "")
+        confidence = float(result.get("confidence", 0))
+        reasoning = result.get("reasoning", "")
+
+        matched_type = fuzzy_match_type(type_name)
+        if matched_type:
+            type_name = matched_type
+            category_name = TYPE_TO_CATEGORY.get(matched_type, category_name)
+        else:
+            if not category_name or category_name not in [g[0] for g in CATEGORY_GROUPS]:
+                for t in ALL_TYPE_NAMES:
+                    if type_name in t or t in type_name:
+                        type_name = t
+                        category_name = TYPE_TO_CATEGORY[t]
+                        break
+
+        update_classify_result(image_id, type_name, category_name, confidence, status="done")
+
+        insert_agent_log(
+            image_id=image_id,
+            agent_stage="classify",
+            input_summary=f"图片: {file_name}",
+            output_json={"type_name": type_name, "category_name": category_name,
+                         "confidence": confidence, "reasoning": reasoning,
+                         "raw_response": raw_response},
+            llm_model=model_name,
+            duration_ms=duration_ms,
+            status="done"
+        )
+
+        return {"image_id": image_id, "status": "done", "type_name": type_name,
+                "confidence": confidence, "duration_ms": duration_ms}
+
+    except Exception as e:
+        duration_ms = int((time.time() - start_time) * 1000)
+        error_msg = str(e)
+
+        update_classify_result(image_id, None, None, 0, status="failed")
+
+        insert_agent_log(
+            image_id=image_id,
+            agent_stage="classify",
+            input_summary=f"图片: {file_name}",
+            output_json={"error": error_msg},
+            llm_model=get_main_model(),
+            duration_ms=duration_ms,
+            status="failed",
+            error_msg=error_msg
+        )
+
+        return {"image_id": image_id, "status": "failed", "error": error_msg,
+                "duration_ms": duration_ms}
+
+
+def run_classify(batch_id: int = None, max_images: int = None, workers: int = MAX_WORKERS):
+    print(f"Agent1 分类管道启动...")
+    print(f"  并发数: {workers}")
+    print(f"  模型: {get_main_model()}")
+    if batch_id:
+        batch_info = get_batch(batch_id)
+        print(f"  批次: {batch_info['batch_no'] if batch_info else batch_id}")
+
+    total_processed = 0
+    total_done = 0
+    total_failed = 0
+    total_start = time.time()
+
+    while True:
+        images = get_pending_classify_images(batch_id=batch_id, limit=BATCH_SIZE)
+        if not images:
+            break
+
+        if max_images and total_processed >= max_images:
+            break
+
+        batch_images = images
+        if max_images:
+            remaining = max_images - total_processed
+            if len(batch_images) > remaining:
+                batch_images = batch_images[:remaining]
+
+        print(f"\n批次处理: {len(batch_images)} 张图片 (已处理 {total_processed})")
+
+        with ThreadPoolExecutor(max_workers=workers) as executor:
+            futures = {}
+            for img in batch_images:
+                future = executor.submit(
+                    classify_single_image,
+                    img["id"], img["file_path"], img["file_name"]
+                )
+                futures[future] = img
+
+            for future in as_completed(futures):
+                img = futures[future]
+                try:
+                    result = future.result()
+                    total_processed += 1
+                    if result["status"] == "done":
+                        total_done += 1
+                        print(f"  ✓ [{total_processed}] {img['file_name']} → {result['type_name']} ({result['confidence']:.2%}) [{result['duration_ms']}ms]")
+                    else:
+                        total_failed += 1
+                        print(f"  ✗ [{total_processed}] {img['file_name']} → 失败: {result.get('error', '')[:60]}")
+                except Exception as e:
+                    total_processed += 1
+                    total_failed += 1
+                    print(f"  ✗ [{total_processed}] {img['file_name']} → 异常: {str(e)[:60]}")
+
+        if batch_id:
+            stats = get_classify_stats(batch_id)
+            update_batch_progress(batch_id,
+                                  ocr_progress=int(stats["done"] / max(stats["total"], 1) * 100),
+                                  error_count=stats["failed"])
+
+    elapsed = time.time() - total_start
+    print(f"\n{'='*50}")
+    print(f"Agent1 分类完成!")
+    print(f"  处理总数: {total_processed}")
+    print(f"  成功: {total_done}")
+    print(f"  失败: {total_failed}")
+    print(f"  总耗时: {elapsed:.1f}s")
+    print(f"  平均速度: {total_processed / max(elapsed, 0.1):.1f} 张/秒")
+    print(f"{'='*50}")
+
+    if batch_id:
+        insert_pipeline_log(None, batch_id, "agent1_classify",
+                            "done" if total_failed == 0 else "partial",
+                            f"处理{total_processed}张: 成功{total_done}, 失败{total_failed}, 耗时{elapsed:.1f}s")
+
+    return {"total": total_processed, "done": total_done, "failed": total_failed, "elapsed": elapsed}
+
+
+if __name__ == "__main__":
+    import argparse
+    parser = argparse.ArgumentParser(description="Agent1 凭证分类管道")
+    parser.add_argument("--batch-id", type=int, help="指定批次ID (不指定则处理所有pending)")
+    parser.add_argument("--max-images", type=int, help="最多处理张数")
+    parser.add_argument("--workers", type=int, default=MAX_WORKERS, help=f"并发数 (默认{MAX_WORKERS})")
+    args = parser.parse_args()
+
+    run_classify(batch_id=args.batch_id, max_images=args.max_images, workers=args.workers)
